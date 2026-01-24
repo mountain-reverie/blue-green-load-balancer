@@ -1,0 +1,37 @@
+# Blue/Green Load Balancer Configuration
+
+services:
+  blue:
+    url: "http://localhost:3001"
+    health_path: "/health"
+  green:
+    url: "http://localhost:3002"
+    health_path: "/health"
+
+proxy:
+  listen_addr: ":8080"
+  drain_timeout: "30s"
+
+git:
+  repo_url: "https://github.com/user/deploy-config.git"
+  poll_interval: "30s"
+  branch: "main"
+  # auth_token: "${GIT_AUTH_TOKEN}"  # Optional: for private repos
+
+deploy:
+  blue_tag: "deploy/blue"
+  green_tag: "deploy/green"
+  active_tag: "deploy/active"
+
+admin:
+  hostname: "bluegreen-admin"
+  state_dir: "/var/lib/bluegreen/tailscale"
+  # auth_key: "${TS_AUTH_KEY}"  # Optional: Tailscale auth key
+
+health:
+  interval: "10s"
+  timeout: "5s"
+
+metrics:
+  history_duration: "24h"
+  history_resolution: "1m"

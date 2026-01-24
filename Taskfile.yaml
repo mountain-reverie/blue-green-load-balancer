@@ -1,0 +1,141 @@
+version: '3'
+
+vars:
+  BINARY_NAME: bluegreen
+  MAIN_PKG: ./cmd/bluegreen
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  build:
+    desc: Build the application
+    deps: [generate]
+    cmds:
+      - go build -o {{.BINARY_NAME}} {{.MAIN_PKG}}
+
+  run:
+    desc: Run the application locally
+    deps: [build]
+    cmds:
+      - ./{{.BINARY_NAME}} -config config/config.yaml -local-admin :8081
+
+  test:
+    desc: Run unit tests
+    deps: [generate]
+    cmds:
+      - go test -v -race ./...
+
+  test:coverage:
+    desc: Run tests with coverage
+    deps: [generate]
+    cmds:
+      - go test -v -race -coverprofile=coverage.out ./...
+      - go tool cover -html=coverage.out -o coverage.html
+
+  test:integration:
+    desc: Run integration tests
+    deps: [generate]
+    cmds:
+      - go test -v -tags=integration ./tests/integration/...
+
+  lint:
+    desc: Run linters
+    deps: [generate]
+    cmds:
+      - golangci-lint run
+
+  generate:
+    desc: Generate code (templates, etc.)
+    cmds:
+      - templ generate ./internal/ui/templates/
+
+  generate:watch:
+    desc: Watch and regenerate templates
+    cmds:
+      - templ generate --watch ./internal/ui/templates/
+
+  fmt:
+    desc: Format code
+    cmds:
+      - go fmt ./...
+      - templ fmt ./internal/ui/templates/
+
+  mod:
+    desc: Tidy go modules
+    cmds:
+      - go mod tidy
+      - go mod verify
+
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - rm -f {{.BINARY_NAME}}
+      - rm -f coverage.out coverage.html
+
+  docker:build:
+    desc: Build Docker image
+    deps: [generate]
+    cmds:
+      - docker build -t bluegreen-lb:latest .
+
+  docker:run:
+    desc: Run in Docker
+    cmds:
+      - docker run --rm -p 8080:8080 -p 8081:8081 -v $(pwd)/config:/app/config bluegreen-lb:latest
+
+  install:tools:
+    desc: Install development tools
+    cmds:
+      - go install github.com/a-h/templ/cmd/templ@latest
+      - go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+
+  mock:blue:
+    desc: Run a mock blue service on port 3001
+    cmds:
+      - |
+        go run -C /dev/stdin <<EOF
+        package main
+        import (
+          "fmt"
+          "net/http"
+        )
+        func main() {
+          http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+            w.Header().Set("X-Service", "blue")
+            fmt.Fprintln(w, "Hello from Blue!")
+          })
+          http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+            w.WriteHeader(http.StatusOK)
+            fmt.Fprintln(w, "OK")
+          })
+          fmt.Println("Blue service running on :3001")
+          http.ListenAndServe(":3001", nil)
+        }
+        EOF
+
+  mock:green:
+    desc: Run a mock green service on port 3002
+    cmds:
+      - |
+        go run -C /dev/stdin <<EOF
+        package main
+        import (
+          "fmt"
+          "net/http"
+        )
+        func main() {
+          http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+            w.Header().Set("X-Service", "green")
+            fmt.Fprintln(w, "Hello from Green!")
+          })
+          http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+            w.WriteHeader(http.StatusOK)
+            fmt.Fprintln(w, "OK")
+          })
+          fmt.Println("Green service running on :3002")
+          http.ListenAndServe(":3002", nil)
+        }
+        EOF

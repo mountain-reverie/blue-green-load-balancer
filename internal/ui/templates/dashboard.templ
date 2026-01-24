@@ -1,0 +1,242 @@
+package templates
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/mountain-reverie/blue-green-load-balancer/internal/config"
+	"github.com/mountain-reverie/blue-green-load-balancer/internal/metrics"
+	"github.com/mountain-reverie/blue-green-load-balancer/internal/switcher"
+)
+
+type DashboardData struct {
+	Status  switcher.Status
+	Metrics metrics.Snapshot
+	History []switcher.SwitchEvent
+}
+
+templ DashboardPage(data DashboardData) {
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<meta charset="UTF-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+			<title>Blue/Green Load Balancer</title>
+			<link href="/static/css/output.css" rel="stylesheet"/>
+			<script src="https://unpkg.com/htmx.org@1.9.10"></script>
+			<script src="https://unpkg.com/htmx.org/dist/ext/sse.js"></script>
+		</head>
+		<body class="bg-gray-900 text-gray-100 min-h-screen">
+			<div class="container mx-auto px-4 py-8">
+				<header class="mb-8">
+					<h1 class="text-3xl font-bold text-white">Blue/Green Load Balancer</h1>
+					<p class="text-gray-400 mt-2">Admin Dashboard</p>
+				</header>
+				<main hx-ext="sse" sse-connect="/events" sse-swap="status">
+					@StatusSection(data.Status)
+					@MetricsSection(data.Metrics)
+					@HistorySection(data.History)
+				</main>
+			</div>
+			<script>
+				// Handle SSE status updates
+				document.body.addEventListener('sse:status', function(e) {
+					const data = JSON.parse(e.detail.data);
+					updateStatus(data.status);
+					updateMetrics(data.metrics);
+				});
+
+				function updateStatus(status) {
+					// Update active service indicator
+					const activeEl = document.getElementById('active-service');
+					if (activeEl) {
+						activeEl.textContent = status.active_service;
+						activeEl.className = status.active_service === 'blue'
+							? 'text-blue-400 font-bold'
+							: 'text-green-400 font-bold';
+					}
+				}
+
+				function updateMetrics(metrics) {
+					// Update metrics values
+					document.getElementById('total-requests').textContent = metrics.total_requests;
+					document.getElementById('rps').textContent = metrics.requests_per_second.toFixed(2);
+					document.getElementById('active-connections').textContent = metrics.active_connections;
+					document.getElementById('error-rate').textContent = (metrics.error_rate * 100).toFixed(2) + '%';
+				}
+			</script>
+		</body>
+	</html>
+}
+
+templ StatusSection(status switcher.Status) {
+	<section class="mb-8">
+		<h2 class="text-xl font-semibold mb-4">Service Status</h2>
+		<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+			<!-- Active Service Card -->
+			<div class="bg-gray-800 rounded-lg p-6">
+				<h3 class="text-gray-400 text-sm uppercase mb-2">Active Service</h3>
+				<p id="active-service" class={ templ.KV("text-blue-400", status.ActiveService == config.ServiceBlue), templ.KV("text-green-400", status.ActiveService == config.ServiceGreen), "text-2xl font-bold" }>
+					{ string(status.ActiveService) }
+				</p>
+				if !status.LastSwitch.IsZero() {
+					<p class="text-gray-500 text-sm mt-2">
+						Last switch: { status.LastSwitch.Format(time.RFC3339) }
+					</p>
+				}
+			</div>
+			<!-- Blue Service Card -->
+			@ServiceCard("Blue", status.BlueHealth.Healthy, status.BlueHealth.Latency, status.BlueHealth.Error, "blue")
+			<!-- Green Service Card -->
+			@ServiceCard("Green", status.GreenHealth.Healthy, status.GreenHealth.Latency, status.GreenHealth.Error, "green")
+		</div>
+	</section>
+}
+
+templ ServiceCard(name string, healthy bool, latency time.Duration, errMsg string, color string) {
+	<div class={ "bg-gray-800 rounded-lg p-6 border-l-4", templ.KV("border-blue-500", color == "blue"), templ.KV("border-green-500", color == "green") }>
+		<div class="flex items-center justify-between mb-2">
+			<h3 class={ "text-lg font-semibold", templ.KV("text-blue-400", color == "blue"), templ.KV("text-green-400", color == "green") }>
+				{ name }
+			</h3>
+			<span class={ "px-2 py-1 rounded text-xs font-medium", templ.KV("bg-green-900 text-green-300", healthy), templ.KV("bg-red-900 text-red-300", !healthy) }>
+				if healthy {
+					Healthy
+				} else {
+					Unhealthy
+				}
+			</span>
+		</div>
+		<p class="text-gray-400 text-sm">
+			Latency: { fmt.Sprintf("%.2fms", float64(latency.Microseconds())/1000) }
+		</p>
+		if errMsg != "" {
+			<p class="text-red-400 text-sm mt-1">{ errMsg }</p>
+		}
+	</div>
+}
+
+templ MetricsSection(m metrics.Snapshot) {
+	<section class="mb-8">
+		<h2 class="text-xl font-semibold mb-4">Metrics</h2>
+		<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+			@MetricCard("Total Requests", fmt.Sprintf("%d", m.TotalRequests), "total-requests")
+			@MetricCard("Requests/sec", fmt.Sprintf("%.2f", m.RequestsPerSecond), "rps")
+			@MetricCard("Active Connections", fmt.Sprintf("%d", m.ActiveConnections), "active-connections")
+			@MetricCard("Error Rate", fmt.Sprintf("%.2f%%", m.ErrorRate*100), "error-rate")
+		</div>
+		<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
+			@MetricCard("P50 Latency", fmt.Sprintf("%.2fms", m.LatencyP50), "p50")
+			@MetricCard("P90 Latency", fmt.Sprintf("%.2fms", m.LatencyP90), "p90")
+			@MetricCard("P99 Latency", fmt.Sprintf("%.2fms", m.LatencyP99), "p99")
+			@MetricCard("Uptime", formatDuration(time.Duration(m.UptimeSeconds)*time.Second), "uptime")
+		</div>
+	</section>
+}
+
+templ MetricCard(label string, value string, id string) {
+	<div class="bg-gray-800 rounded-lg p-4">
+		<p class="text-gray-400 text-sm">{ label }</p>
+		<p id={ id } class="text-2xl font-bold text-white mt-1">{ value }</p>
+	</div>
+}
+
+templ HistorySection(events []switcher.SwitchEvent) {
+	<section class="mb-8">
+		<h2 class="text-xl font-semibold mb-4">Switch History</h2>
+		<div class="bg-gray-800 rounded-lg overflow-hidden">
+			<table class="w-full">
+				<thead class="bg-gray-700">
+					<tr>
+						<th class="px-4 py-3 text-left text-sm font-medium text-gray-300">Time</th>
+						<th class="px-4 py-3 text-left text-sm font-medium text-gray-300">From</th>
+						<th class="px-4 py-3 text-left text-sm font-medium text-gray-300">To</th>
+						<th class="px-4 py-3 text-left text-sm font-medium text-gray-300">Trigger</th>
+						<th class="px-4 py-3 text-left text-sm font-medium text-gray-300">Duration</th>
+						<th class="px-4 py-3 text-left text-sm font-medium text-gray-300">Status</th>
+					</tr>
+				</thead>
+				<tbody class="divide-y divide-gray-700">
+					if len(events) == 0 {
+						<tr>
+							<td colspan="6" class="px-4 py-8 text-center text-gray-500">
+								No switch events yet
+							</td>
+						</tr>
+					}
+					for _, event := range events {
+						<tr class="hover:bg-gray-750">
+							<td class="px-4 py-3 text-sm text-gray-300">
+								{ event.Timestamp.Format("2006-01-02 15:04:05") }
+							</td>
+							<td class="px-4 py-3 text-sm">
+								<span class={ templ.KV("text-blue-400", event.From == config.ServiceBlue), templ.KV("text-green-400", event.From == config.ServiceGreen) }>
+									{ string(event.From) }
+								</span>
+							</td>
+							<td class="px-4 py-3 text-sm">
+								<span class={ templ.KV("text-blue-400", event.To == config.ServiceBlue), templ.KV("text-green-400", event.To == config.ServiceGreen) }>
+									{ string(event.To) }
+								</span>
+							</td>
+							<td class="px-4 py-3 text-sm text-gray-400">
+								{ string(event.Trigger) }
+							</td>
+							<td class="px-4 py-3 text-sm text-gray-400">
+								{ event.Duration.String() }
+							</td>
+							<td class="px-4 py-3 text-sm">
+								if event.Success {
+									<span class="text-green-400">Success</span>
+								} else {
+									<span class="text-red-400" title={ event.Error }>Failed</span>
+								}
+							</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+		</div>
+	</section>
+}
+
+templ SwitchControls() {
+	<section class="mb-8">
+		<h2 class="text-xl font-semibold mb-4">Switch Controls</h2>
+		<div class="bg-gray-800 rounded-lg p-6">
+			<div class="flex gap-4">
+				<button
+					hx-post="/api/switch"
+					hx-vals='{"target": "blue"}'
+					hx-swap="none"
+					class="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"
+				>
+					Switch to Blue
+				</button>
+				<button
+					hx-post="/api/switch"
+					hx-vals='{"target": "green"}'
+					hx-swap="none"
+					class="px-6 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium transition-colors"
+				>
+					Switch to Green
+				</button>
+			</div>
+		</div>
+	</section>
+}
+
+func formatDuration(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	if d < 24*time.Hour {
+		return fmt.Sprintf("%dh %dm", int(d.Hours()), int(d.Minutes())%60)
+	}
+	days := int(d.Hours()) / 24
+	hours := int(d.Hours()) % 24
+	return fmt.Sprintf("%dd %dh", days, hours)
+}
