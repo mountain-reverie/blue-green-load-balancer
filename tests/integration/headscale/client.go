@@ -98,6 +98,10 @@ func (c *TestClient) Post(ctx context.Context, url, contentType string, body io.
 
 // Close closes the test client and its tsnet server.
 func (c *TestClient) Close() error {
+	// Close idle connections to prevent lingering connections
+	if transport, ok := c.httpClient.Transport.(*http.Transport); ok {
+		transport.CloseIdleConnections()
+	}
 	return c.tsServer.Close()
 }
 

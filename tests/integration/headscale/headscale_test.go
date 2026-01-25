@@ -117,8 +117,8 @@ func setupTestSuite(t *testing.T) *TestSuite {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	// Create minimal switcher and metrics for admin server
-	sw := switcher.New(cfg, logger, nil)
-	metricsCollector := metrics.NewCollector(cfg, logger)
+	sw := switcher.NewSwitcher(cfg, logger, nil, nil)
+	metricsCollector := metrics.NewCollector(cfg)
 
 	suite.adminSrv = admin.NewServer(cfg, logger, sw, metricsCollector)
 	err = suite.adminSrv.Start(ctx)
