@@ -81,9 +81,15 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Initialize tsnet server
 	s.tsServer = &tsnet.Server{
-		Hostname: s.cfg.Admin.Hostname,
-		Dir:      s.cfg.Admin.StateDir,
-		Logf:     func(format string, args ...any) { s.logger.Debug(fmt.Sprintf(format, args...)) },
+		Hostname:  s.cfg.Admin.Hostname,
+		Dir:       s.cfg.Admin.StateDir,
+		Ephemeral: s.cfg.Admin.Ephemeral,
+		Logf:      func(format string, args ...any) { s.logger.Debug(fmt.Sprintf(format, args...)) },
+	}
+
+	// Set custom control server URL if provided (e.g., Headscale)
+	if s.cfg.Admin.ControlURL != "" {
+		s.tsServer.ControlURL = s.cfg.Admin.ControlURL
 	}
 
 	// Set auth key if provided

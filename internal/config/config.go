@@ -54,9 +54,11 @@ type DeployConfig struct {
 
 // AdminConfig defines the Tailscale admin interface settings.
 type AdminConfig struct {
-	Hostname string `yaml:"hostname"`
-	StateDir string `yaml:"state_dir"`
-	AuthKey  string `yaml:"auth_key"`
+	Hostname   string `yaml:"hostname"`
+	StateDir   string `yaml:"state_dir"`
+	AuthKey    string `yaml:"auth_key"`
+	ControlURL string `yaml:"control_url"` // Custom control server (e.g., Headscale)
+	Ephemeral  bool   `yaml:"ephemeral"`   // Node is removed when it goes offline
 }
 
 // HealthConfig defines the health check settings.
