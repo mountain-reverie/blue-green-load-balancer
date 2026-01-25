@@ -175,7 +175,7 @@ func TestSwitcherWithHealthCheck(t *testing.T) {
 
 	// Test switch to green (should succeed as green is healthy)
 	t.Run("switch to healthy green", func(t *testing.T) {
-		err := sw.Switch(ctx, config.ServiceGreen, switcher.TriggerManual)
+		err := sw.Switch(ctx, config.ServiceGreen, switcher.TriggerGitTag)
 		assert.NoError(t, err)
 		assert.Equal(t, config.ServiceGreen, sw.ActiveTarget())
 	})
@@ -185,7 +185,7 @@ func TestSwitcherWithHealthCheck(t *testing.T) {
 		blueHealthy = false
 		time.Sleep(200 * time.Millisecond) // Wait for health check
 
-		err := sw.Switch(ctx, config.ServiceBlue, switcher.TriggerManual)
+		err := sw.Switch(ctx, config.ServiceBlue, switcher.TriggerGitTag)
 		assert.Error(t, err)
 		assert.Equal(t, config.ServiceGreen, sw.ActiveTarget()) // Should still be green
 	})
@@ -195,9 +195,20 @@ func TestSwitcherWithHealthCheck(t *testing.T) {
 		blueHealthy = true
 		time.Sleep(200 * time.Millisecond) // Wait for health check
 
-		err := sw.Switch(ctx, config.ServiceBlue, switcher.TriggerManual)
+		err := sw.Switch(ctx, config.ServiceBlue, switcher.TriggerGitTag)
 		assert.NoError(t, err)
 		assert.Equal(t, config.ServiceBlue, sw.ActiveTarget())
+	})
+
+	// Test no-op when target equals current (git tag hasn't changed)
+	t.Run("no switch when target is already active", func(t *testing.T) {
+		initialSwitchCount := sw.SwitchCount()
+
+		// Try to switch to blue when already on blue
+		err := sw.Switch(ctx, config.ServiceBlue, switcher.TriggerGitTag)
+		assert.NoError(t, err, "switch to same target should not error")
+		assert.Equal(t, config.ServiceBlue, sw.ActiveTarget(), "should remain on blue")
+		assert.Equal(t, initialSwitchCount, sw.SwitchCount(), "switch count should not increment for no-op")
 	})
 }
 

@@ -27,7 +27,6 @@ type SwitchEvent struct {
 type SwitchTrigger string
 
 const (
-	TriggerManual  SwitchTrigger = "manual"
 	TriggerWebhook SwitchTrigger = "webhook"
 	TriggerGitTag  SwitchTrigger = "git_tag"
 )
@@ -210,6 +209,44 @@ func (s *Switcher) GetGitStatus() GitStatus {
 		return s.watcher.GetStatus()
 	}
 	return GitStatus{}
+}
+
+// RefreshGitResult contains the result of a git refresh operation.
+type RefreshGitResult struct {
+	Refreshed    bool      `json:"refreshed"`
+	Error        string    `json:"error,omitempty"`
+	BlueCommit   string    `json:"blue_commit,omitempty"`
+	GreenCommit  string    `json:"green_commit,omitempty"`
+	ActiveCommit string    `json:"active_commit,omitempty"`
+	LastFetch    time.Time `json:"last_fetch"`
+}
+
+// RefreshGit triggers an immediate git fetch and returns the result.
+// Any tag changes detected will trigger switches via the normal callback mechanism.
+func (s *Switcher) RefreshGit(ctx context.Context) RefreshGitResult {
+	if s.watcher == nil {
+		return RefreshGitResult{
+			Refreshed: false,
+			Error:     "git watcher not configured",
+		}
+	}
+
+	err := s.watcher.FetchNow(ctx)
+	status := s.watcher.GetStatus()
+
+	result := RefreshGitResult{
+		Refreshed:    err == nil,
+		BlueCommit:   status.BlueCommit,
+		GreenCommit:  status.GreenCommit,
+		ActiveCommit: status.ActiveCommit,
+		LastFetch:    status.LastFetch,
+	}
+
+	if err != nil {
+		result.Error = err.Error()
+	}
+
+	return result
 }
 
 // HandleTagChange handles a git tag change event.

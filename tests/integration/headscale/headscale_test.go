@@ -206,7 +206,7 @@ func TestHeadscaleAdminStatus(t *testing.T) {
 	t.Logf("Status response: %s", string(body))
 }
 
-func TestHeadscaleAdminSwitch(t *testing.T) {
+func TestHeadscaleWebhookRefresh(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping Headscale integration test in short mode")
 	}
@@ -214,23 +214,22 @@ func TestHeadscaleAdminSwitch(t *testing.T) {
 	suite := setupTestSuite(t)
 	defer suite.Cleanup()
 
-	// Test /api/switch endpoint via Tailscale network
-	t.Log("Testing /api/switch via Tailscale...")
+	// Test /api/webhook/refresh endpoint via Tailscale network
+	t.Log("Testing /api/webhook/refresh via Tailscale...")
 
-	resp, err := suite.testClient.Post(suite.ctx, suite.adminURL("/api/switch"),
-		"application/json", strings.NewReader(`{"target":"green"}`))
+	resp, err := suite.testClient.Post(suite.ctx, suite.adminURL("/api/webhook/refresh"),
+		"application/json", strings.NewReader(`{}`))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
-	// Switch may fail due to no real backends, but we're testing connectivity
+	// Refresh may fail due to no git config, but we're testing connectivity
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
-	t.Logf("Switch response: %d - %s", resp.StatusCode, string(body))
+	t.Logf("Webhook refresh response: %d - %s", resp.StatusCode, string(body))
 
 	// Any response (success or error) proves the network path works
 	assert.True(t, resp.StatusCode == http.StatusOK ||
-		resp.StatusCode == http.StatusBadRequest ||
-		resp.StatusCode == http.StatusServiceUnavailable,
+		resp.StatusCode == http.StatusInternalServerError,
 		"unexpected status code: %d", resp.StatusCode)
 }
 

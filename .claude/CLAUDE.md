@@ -98,7 +98,6 @@ templ generate ./internal/ui/templates/
 - `GET /api/status` - Current status of blue/green services
 - `GET /api/metrics` - Current metrics snapshot
 - `GET /api/metrics/history` - Historical metrics data
-- `POST /api/switch` - Manually trigger switch
-- `POST /api/webhook/switch` - Webhook-triggered switch
+- `POST /api/webhook/refresh` - Trigger git refresh (switches happen based on git tags)
 - `GET /api/docs` - Swagger UI
 - `GET /api/openapi` - OpenAPI spec

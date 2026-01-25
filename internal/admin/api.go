@@ -2,7 +2,6 @@ package admin
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -10,7 +9,6 @@ import (
 	"github.com/mountain-reverie/blue-green-load-balancer/internal/config"
 	"github.com/mountain-reverie/blue-green-load-balancer/internal/health"
 	"github.com/mountain-reverie/blue-green-load-balancer/internal/metrics"
-	"github.com/mountain-reverie/blue-green-load-balancer/internal/switcher"
 )
 
 // ServiceStatus represents the status of a backend service.
@@ -42,23 +40,6 @@ type StatusOutput struct {
 		LastSwitch    time.Time         `json:"last_switch"`
 		SwitchCount   int64             `json:"switch_count" example:"5"`
 		Git           GitStatusResponse `json:"git"`
-	}
-}
-
-// SwitchInput is the request body for POST /api/switch
-type SwitchInput struct {
-	Body struct {
-		Target string `json:"target" enum:"blue,green" required:"true" doc:"Target service to switch to"`
-	}
-}
-
-// SwitchOutput is the response for POST /api/switch
-type SwitchOutput struct {
-	Body struct {
-		Success  bool   `json:"success" example:"true"`
-		Previous string `json:"previous" example:"blue"`
-		Current  string `json:"current" example:"green"`
-		Message  string `json:"message,omitempty"`
 	}
 }
 
@@ -135,33 +116,6 @@ func RegisterAPI(api huma.API, s *Server) {
 			ActiveCommit: status.Git.ActiveCommit,
 			Error:        status.Git.Error,
 		}
-
-		return out, nil
-	})
-
-	// POST /api/switch
-	huma.Post(api, "/api/switch", func(ctx context.Context, input *SwitchInput) (*SwitchOutput, error) {
-		var target config.ServiceTarget
-		switch input.Body.Target {
-		case "blue":
-			target = config.ServiceBlue
-		case "green":
-			target = config.ServiceGreen
-		default:
-			return nil, huma.Error400BadRequest(fmt.Sprintf("invalid target: %s", input.Body.Target))
-		}
-
-		previous := s.switcher.ActiveTarget()
-
-		if err := s.switcher.Switch(ctx, target, switcher.TriggerManual); err != nil {
-			return nil, huma.Error500InternalServerError(err.Error())
-		}
-
-		out := &SwitchOutput{}
-		out.Body.Success = true
-		out.Body.Previous = string(previous)
-		out.Body.Current = string(target)
-		out.Body.Message = fmt.Sprintf("Switched from %s to %s", previous, target)
 
 		return out, nil
 	})

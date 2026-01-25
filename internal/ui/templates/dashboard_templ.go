@@ -666,7 +666,7 @@ func SwitchControls() templ.Component {
 			templ_7745c5c3_Var33 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 50, "<section class=\"mb-8\"><h2 class=\"text-xl font-semibold mb-4\">Switch Controls</h2><div class=\"bg-gray-800 rounded-lg p-6\"><div class=\"flex gap-4\"><button hx-post=\"/api/switch\" hx-vals='{\"target\": \"blue\"}' hx-swap=\"none\" class=\"px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors\">Switch to Blue</button> <button hx-post=\"/api/switch\" hx-vals='{\"target\": \"green\"}' hx-swap=\"none\" class=\"px-6 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium transition-colors\">Switch to Green</button></div></div></section>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 50, "<section class=\"mb-8\"><h2 class=\"text-xl font-semibold mb-4\">Git Controls</h2><div class=\"bg-gray-800 rounded-lg p-6\"><p class=\"text-gray-400 mb-4\">Switching is controlled by git tags. Update the deploy/blue or deploy/green tag to trigger a switch.</p><div class=\"flex gap-4\"><button hx-post=\"/api/webhook/refresh\" hx-swap=\"none\" class=\"px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium transition-colors\">Refresh Git Tags</button></div></div></section>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

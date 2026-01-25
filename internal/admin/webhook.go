@@ -6,7 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
-	"fmt"
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -14,7 +14,6 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
-	"github.com/mountain-reverie/blue-green-load-balancer/internal/config"
 	"github.com/mountain-reverie/blue-green-load-balancer/internal/switcher"
 )
 
@@ -23,11 +22,10 @@ type WebhookConfig struct {
 	Secret string // HMAC secret for webhook verification
 }
 
-// WebhookSwitchInput is the request body for POST /api/webhook/switch
-type WebhookSwitchInput struct {
+// WebhookRefreshInput is the request body for POST /api/webhook/refresh
+type WebhookRefreshInput struct {
 	RawBody []byte
 	Body    struct {
-		Target    string `json:"target" enum:"blue,green" required:"true" doc:"Target service to switch to"`
 		Signature string `json:"signature,omitempty" doc:"HMAC signature for verification"`
 	}
 	Headers struct {
@@ -36,55 +34,34 @@ type WebhookSwitchInput struct {
 	}
 }
 
-// WebhookSwitchOutput is the response for POST /api/webhook/switch
-type WebhookSwitchOutput struct {
-	Body struct {
-		Success  bool   `json:"success" example:"true"`
-		Previous string `json:"previous" example:"blue"`
-		Current  string `json:"current" example:"green"`
-		Message  string `json:"message,omitempty"`
-	}
+// WebhookRefreshOutput is the response for POST /api/webhook/refresh
+type WebhookRefreshOutput struct {
+	Body switcher.RefreshGitResult
 }
 
 // RegisterWebhookAPI registers webhook API operations.
 func RegisterWebhookAPI(api huma.API, s *Server, webhookSecret string) {
-	// POST /api/webhook/switch
-	huma.Post(api, "/api/webhook/switch", func(ctx context.Context, input *WebhookSwitchInput) (*WebhookSwitchOutput, error) {
+	// POST /api/webhook/refresh - triggers a git refresh which may cause a switch
+	huma.Post(api, "/api/webhook/refresh", func(ctx context.Context, input *WebhookRefreshInput) (*WebhookRefreshOutput, error) {
 		// Verify webhook signature if secret is configured
 		if webhookSecret != "" {
-			if !verifyWebhook(input, webhookSecret) {
+			if !verifyWebhookRefresh(input, webhookSecret) {
 				return nil, huma.Error401Unauthorized("invalid webhook signature")
 			}
 		}
 
-		var target config.ServiceTarget
-		switch input.Body.Target {
-		case "blue":
-			target = config.ServiceBlue
-		case "green":
-			target = config.ServiceGreen
-		default:
-			return nil, huma.Error400BadRequest(fmt.Sprintf("invalid target: %s", input.Body.Target))
+		result := s.switcher.RefreshGit(ctx)
+
+		if result.Error != "" && !result.Refreshed {
+			return nil, huma.Error500InternalServerError(result.Error)
 		}
 
-		previous := s.switcher.ActiveTarget()
-
-		if err := s.switcher.Switch(ctx, target, switcher.TriggerWebhook); err != nil {
-			return nil, huma.Error500InternalServerError(err.Error())
-		}
-
-		out := &WebhookSwitchOutput{}
-		out.Body.Success = true
-		out.Body.Previous = string(previous)
-		out.Body.Current = string(target)
-		out.Body.Message = fmt.Sprintf("Webhook triggered switch from %s to %s", previous, target)
-
-		return out, nil
+		return &WebhookRefreshOutput{Body: result}, nil
 	})
 }
 
-// verifyWebhook verifies the webhook signature.
-func verifyWebhook(input *WebhookSwitchInput, secret string) bool {
+// verifyWebhookRefresh verifies the webhook signature for refresh requests.
+func verifyWebhookRefresh(input *WebhookRefreshInput, secret string) bool {
 	// Check X-Hub-Signature-256 header (GitHub style)
 	if input.Headers.XHubSignature256 != "" {
 		return verifyHubSignature(input.RawBody, input.Headers.XHubSignature256, secret)
@@ -141,7 +118,7 @@ func NewWebhookHandler(sw *switcher.Switcher, secret string) *WebhookHandler {
 // maxWebhookBodySize is the maximum size of a webhook request body (1MB).
 const maxWebhookBodySize = 1 << 20
 
-// ServeHTTP implements http.Handler.
+// ServeHTTP implements http.Handler for git refresh webhooks.
 func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -182,31 +159,18 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Parse target from query param or simple body
-	target := r.URL.Query().Get("target")
-	if target == "" {
-		target = strings.TrimSpace(string(body))
-	}
-
-	var serviceTarget config.ServiceTarget
-	switch target {
-	case "blue":
-		serviceTarget = config.ServiceBlue
-	case "green":
-		serviceTarget = config.ServiceGreen
-	default:
-		http.Error(w, "invalid target", http.StatusBadRequest)
-		return
-	}
-
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	if err := h.switcher.Switch(ctx, serviceTarget, switcher.TriggerWebhook); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	// Trigger git refresh - any tag changes will cause switches via the callback
+	result := h.switcher.RefreshGit(ctx)
+
+	if result.Error != "" && !result.Refreshed {
+		http.Error(w, result.Error, http.StatusInternalServerError)
 		return
 	}
 
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, "switched to %s", target)
+	json.NewEncoder(w).Encode(result)
 }

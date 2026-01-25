@@ -2,9 +2,7 @@ package integration
 
 import (
 	"bufio"
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -450,10 +448,11 @@ func TestMetricsSection(t *testing.T) {
 	}
 }
 
-func TestSwitchControls(t *testing.T) {
+func TestGitControls(t *testing.T) {
 	page, err := testBrowser.NewPage()
 	require.NoError(t, err, "failed to create new page")
 	defer page.Close()
+	defer manageScreenshot(t, page)
 
 	// Navigate to the dashboard
 	_, err = page.Goto(testAdminServer.URL)
@@ -465,51 +464,26 @@ func TestSwitchControls(t *testing.T) {
 	})
 	require.NoError(t, err, "failed to wait for DOM content loaded")
 
-	// Verify we start with blue as the active service
-	activeService, err := page.Locator("#active-service").TextContent()
-	require.NoError(t, err, "failed to get active service")
-	assert.Equal(t, "blue", activeService, "should start with blue as active service")
+	// Verify Git Controls section is present
+	gitControlsSectionVisible, err := page.Locator("section:has(h2:text('Git Controls'))").IsVisible()
+	require.NoError(t, err, "failed to check Git Controls section visibility")
+	assert.True(t, gitControlsSectionVisible, "Git Controls section should be visible")
 
-	// Take "before" screenshot showing blue is active
-	saveNamedScreenshot(t, page, "TestSwitchControls_BeforeSwitch")
+	// Verify the section contains explanation text about git-based switching
+	explanationVisible, err := page.Locator("p:text('Switching is controlled by git tags')").IsVisible()
+	require.NoError(t, err, "failed to check explanation text visibility")
+	assert.True(t, explanationVisible, "explanation about git tags should be visible")
 
-	// Verify the blue service card has the active styling (border-blue-500)
-	blueCardVisible, err := page.Locator("div.border-blue-500").IsVisible()
-	require.NoError(t, err, "failed to check blue card visibility")
-	assert.True(t, blueCardVisible, "blue service card should be visible with blue border")
+	// Verify "Refresh Git Tags" button is present
+	refreshButtonVisible, err := page.Locator("button:text('Refresh Git Tags')").IsVisible()
+	require.NoError(t, err, "failed to check Refresh Git Tags button visibility")
+	assert.True(t, refreshButtonVisible, "Refresh Git Tags button should be visible")
 
-	// Switch to green via API
-	switchReq := map[string]string{"target": "green"}
-	switchBody, _ := json.Marshal(switchReq)
-	resp, err := http.Post(testAdminServer.URL+"/api/switch", "application/json", bytes.NewReader(switchBody))
-	require.NoError(t, err, "failed to call switch API")
-	require.Equal(t, http.StatusOK, resp.StatusCode, "switch API should return 200 OK")
-	resp.Body.Close()
-
-	// Reload the page to see the updated state
-	_, err = page.Reload()
-	require.NoError(t, err, "failed to reload page")
-
-	err = page.WaitForLoadState(playwright.PageWaitForLoadStateOptions{
-		State: playwright.LoadStateDomcontentloaded,
-	})
-	require.NoError(t, err, "failed to wait for DOM content loaded after reload")
-
-	// Verify green is now the active service
-	activeServiceAfter, err := page.Locator("#active-service").TextContent()
-	require.NoError(t, err, "failed to get active service after switch")
-	assert.Equal(t, "green", activeServiceAfter, "green should be active after switch")
-
-	// Verify the green service card styling indicates it's the active one
-	greenCardVisible, err := page.Locator("div.border-green-500").IsVisible()
-	require.NoError(t, err, "failed to check green card visibility")
-	assert.True(t, greenCardVisible, "green service card should be visible with green border")
-
-	// Take "after" screenshot showing green is now active
-	saveNamedScreenshot(t, page, "TestSwitchControls_AfterSwitch")
-
-	// Also save the final state as the default screenshot for this test
-	manageScreenshot(t, page)
+	// Verify the button has the correct HTMX attributes
+	refreshButton := page.Locator("button:text('Refresh Git Tags')")
+	hxPost, err := refreshButton.GetAttribute("hx-post")
+	require.NoError(t, err, "failed to get hx-post attribute")
+	assert.Equal(t, "/api/webhook/refresh", hxPost, "button should POST to /api/webhook/refresh")
 }
 
 func TestSSEConnection(t *testing.T) {
