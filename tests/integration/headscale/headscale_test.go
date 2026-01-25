@@ -18,6 +18,7 @@ import (
 
 	"github.com/mountain-reverie/blue-green-load-balancer/internal/admin"
 	"github.com/mountain-reverie/blue-green-load-balancer/internal/config"
+	"github.com/mountain-reverie/blue-green-load-balancer/internal/health"
 	"github.com/mountain-reverie/blue-green-load-balancer/internal/metrics"
 	"github.com/mountain-reverie/blue-green-load-balancer/internal/switcher"
 )
@@ -114,8 +115,11 @@ func setupTestSuite(t *testing.T) *TestSuite {
 	t.Log("Starting admin server with tsnet...")
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
+	// Create health checker (required for GetStatus)
+	healthChecker := health.NewChecker(cfg, logger)
+
 	// Create minimal switcher and metrics for admin server
-	sw := switcher.NewSwitcher(cfg, logger, nil, nil)
+	sw := switcher.NewSwitcher(cfg, logger, nil, healthChecker)
 	metricsCollector := metrics.NewCollector(cfg)
 
 	suite.adminSrv = admin.NewServer(cfg, logger, sw, metricsCollector)
