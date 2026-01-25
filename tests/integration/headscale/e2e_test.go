@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mountain-reverie/blue-green-load-balancer/internal/app"
+	"github.com/mountain-reverie/blue-green-load-balancer/internal/bgctl"
 	"github.com/mountain-reverie/blue-green-load-balancer/internal/config"
 )
 
@@ -48,6 +49,11 @@ type E2ETestSuite struct {
 	headscale  *Container
 	app        *app.Application
 	testClient *TestClient
+
+	// bgctlClientKey is a preauth key for creating bgctl clients
+	bgctlClientKey string
+	// bgctlClientCount tracks how many bgctl clients have been created (for unique state dirs)
+	bgctlClientCount int
 
 	// cleanupFuncs tracks cleanup functions in reverse order for proper teardown.
 	cleanupFuncs []func()
@@ -118,6 +124,13 @@ func setupE2ETestSuite(t *testing.T) *E2ETestSuite {
 	if err != nil {
 		suite.Cleanup()
 		t.Fatalf("failed to create client preauth key: %v", err)
+	}
+
+	// Create additional preauth key for bgctl clients
+	suite.bgctlClientKey, err = suite.headscale.CreatePreauthKey(ctx, "e2etest")
+	if err != nil {
+		suite.Cleanup()
+		t.Fatalf("failed to create bgctl preauth key: %v", err)
 	}
 
 	// 3. Create local git repository with tags (bare repo + working copy)
@@ -256,6 +269,25 @@ func (s *E2ETestSuite) Cleanup() {
 // adminURL constructs URL for admin endpoints via MagicDNS.
 func (s *E2ETestSuite) adminURL(path string) string {
 	return "http://e2e-admin:80" + path
+}
+
+// createBgctlClient creates a new bgctl.Client connected to the E2E admin server.
+// The caller is responsible for closing the client.
+func (s *E2ETestSuite) createBgctlClient() (*bgctl.Client, error) {
+	s.bgctlClientCount++
+	stateDir := filepath.Join(s.tmpDir, fmt.Sprintf("bgctl-state-%d", s.bgctlClientCount))
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	return bgctl.New(s.ctx, &bgctl.Config{
+		Hostname:   "e2e-admin",
+		ControlURL: s.headscale.URL,
+		AuthKey:    s.bgctlClientKey,
+		StateDir:   stateDir,
+		Timeout:    30 * time.Second,
+		Verbose:    true,
+		Logger:     logger,
+	})
 }
 
 // updateGitTag moves a deploy tag to a new commit in the working copy and pushes to bare repo.
@@ -696,6 +728,73 @@ func TestE2EGitWebhookHeadscale(t *testing.T) {
 		}
 
 		t.Log("SSE endpoint accessible")
+	})
+
+	// --- Test 8: bgctl client can get status ---
+	t.Run("bgctl status via Tailscale", func(t *testing.T) {
+		client, err := suite.createBgctlClient()
+		require.NoError(t, err, "failed to create bgctl client")
+		defer client.Close()
+
+		status, err := client.GetStatus(suite.ctx)
+		require.NoError(t, err, "bgctl GetStatus failed")
+
+		assert.Equal(t, "blue", status.ActiveService, "bgctl should report blue as active")
+		assert.NotEmpty(t, status.Git.BlueCommit, "bgctl should report blue_commit")
+		assert.NotEmpty(t, status.Git.GreenCommit, "bgctl should report green_commit")
+
+		t.Logf("bgctl status: active=%s, blue_commit=%s, green_commit=%s",
+			status.ActiveService,
+			status.Git.BlueCommit,
+			status.Git.GreenCommit)
+
+		// Verify formatter works with the response
+		textFormatter := bgctl.NewFormatter("text")
+		textOutput := textFormatter.FormatStatus(status)
+		assert.Contains(t, textOutput, "Active Service:", "text formatter should work")
+
+		// Verify JSON formatter produces valid JSON that can be parsed
+		jsonFormatter := bgctl.NewFormatter("json")
+		jsonOutput := jsonFormatter.FormatStatus(status)
+
+		var parsedStatus bgctl.StatusResponse
+		err = json.Unmarshal([]byte(jsonOutput), &parsedStatus)
+		require.NoError(t, err, "JSON formatter should produce valid JSON")
+		assert.Equal(t, status.ActiveService, parsedStatus.ActiveService, "parsed JSON should match original")
+		assert.Equal(t, status.Git.BlueCommit, parsedStatus.Git.BlueCommit, "parsed JSON should preserve git info")
+	})
+
+	// --- Test 9: bgctl client can trigger refresh ---
+	t.Run("bgctl refresh via Tailscale", func(t *testing.T) {
+		client, err := suite.createBgctlClient()
+		require.NoError(t, err, "failed to create bgctl client")
+		defer client.Close()
+
+		// Get initial status
+		initialStatus, err := client.GetStatus(suite.ctx)
+		require.NoError(t, err)
+		initialGreenCommit := initialStatus.Git.GreenCommit
+		t.Logf("Before refresh: green_commit=%s", initialGreenCommit)
+
+		// Update the green tag
+		err = suite.updateGitTag("deploy/green", "bgctl test - "+time.Now().String())
+		require.NoError(t, err, "failed to update git tag")
+
+		// Trigger refresh via bgctl
+		refresh, err := client.TriggerRefresh(suite.ctx)
+		require.NoError(t, err, "bgctl TriggerRefresh failed")
+		assert.True(t, refresh.Refreshed, "bgctl refresh should succeed")
+
+		t.Logf("bgctl refresh result: refreshed=%v, error=%s", refresh.Refreshed, refresh.Error)
+
+		// Verify green commit changed
+		newStatus, err := client.GetStatus(suite.ctx)
+		require.NoError(t, err)
+		assert.NotEqual(t, initialGreenCommit, newStatus.Git.GreenCommit,
+			"green commit should change after bgctl refresh")
+
+		t.Logf("After refresh: green_commit=%s (was %s)",
+			newStatus.Git.GreenCommit, initialGreenCommit)
 	})
 
 	t.Log("E2E test completed successfully")
