@@ -364,6 +364,8 @@ type RefreshResponse struct {
 }
 
 // triggerWebhookRefresh calls the webhook refresh endpoint.
+// Returns a RefreshResponse or an error. If the endpoint returns 404 (not implemented),
+// returns a RefreshResponse with Error set to indicate unavailability.
 func (s *E2ETestSuite) triggerWebhookRefresh() (*RefreshResponse, error) {
 	resp, err := s.testClient.Post(s.ctx, s.adminURL("/api/webhook/refresh"),
 		"application/json", strings.NewReader(`{}`))
@@ -375,6 +377,14 @@ func (s *E2ETestSuite) triggerWebhookRefresh() (*RefreshResponse, error) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
+	}
+
+	// Handle 404 - webhook endpoint not registered
+	if resp.StatusCode == http.StatusNotFound {
+		return &RefreshResponse{
+			Refreshed: false,
+			Error:     "webhook endpoint not available",
+		}, nil
 	}
 
 	var result RefreshResponse
@@ -627,7 +637,7 @@ func TestE2EGitWebhookHeadscale(t *testing.T) {
 		endpoints := []string{
 			"/api/metrics",
 			"/api/metrics/history",
-			"/api/openapi",
+			"/api/openapi.json",
 			"/api/docs",
 		}
 

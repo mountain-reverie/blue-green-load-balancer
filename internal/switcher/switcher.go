@@ -176,6 +176,9 @@ func (s *Switcher) SwitchToGreen(ctx context.Context, trigger SwitchTrigger) err
 
 // ActiveTarget returns the currently active target.
 func (s *Switcher) ActiveTarget() config.ServiceTarget {
+	if s.proxy == nil {
+		return config.ServiceBlue
+	}
 	return s.proxy.ActiveTarget()
 }
 
