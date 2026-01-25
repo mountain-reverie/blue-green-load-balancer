@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"io/fs"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -8,6 +9,7 @@ import (
 	"github.com/mountain-reverie/blue-green-load-balancer/internal/metrics"
 	"github.com/mountain-reverie/blue-green-load-balancer/internal/switcher"
 	"github.com/mountain-reverie/blue-green-load-balancer/internal/ui/templates"
+	"github.com/mountain-reverie/blue-green-load-balancer/static"
 )
 
 // Handlers provides HTTP handlers for the UI.
@@ -32,7 +34,10 @@ func (h *Handlers) RegisterRoutes(r chi.Router) {
 	r.Get("/", h.Dashboard)
 	r.Get("/dashboard", h.Dashboard)
 	r.Get("/events", h.SSEHandler)
-	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
+
+	// Serve embedded static files
+	staticFS, _ := fs.Sub(static.FS, "css")
+	r.Handle("/static/css/*", http.StripPrefix("/static/css/", http.FileServer(http.FS(staticFS))))
 }
 
 // Dashboard renders the main dashboard page.

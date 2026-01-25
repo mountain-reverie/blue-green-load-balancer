@@ -1,5 +1,3 @@
-//go:build integration
-
 package integration
 
 import (
@@ -183,27 +181,6 @@ func createTestAdminServer(blueURL, greenURL string) (*testAdminServerWrapper, e
 		Server: server,
 		app:    application,
 	}, nil
-}
-
-// findStaticDir locates the static directory relative to the test file.
-func findStaticDir() string {
-	// Try common locations
-	paths := []string{
-		"../../static",
-		"../../../static",
-		"static",
-	}
-
-	for _, p := range paths {
-		if abs, err := filepath.Abs(p); err == nil {
-			if _, err := os.Stat(abs); err == nil {
-				return abs
-			}
-		}
-	}
-
-	// Return empty if not found; tests will still work but without CSS
-	return ""
 }
 
 // waitForHealthChecks waits for both services to complete at least one health check.
@@ -725,4 +702,3 @@ func TestDashboardAccessibility(t *testing.T) {
 	require.NoError(t, err, "failed to check charset meta tag")
 	assert.Equal(t, 1, charsetMetaCount, "charset meta tag should be present")
 }
-

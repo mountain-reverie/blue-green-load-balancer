@@ -3,11 +3,12 @@ package app
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
@@ -24,18 +25,24 @@ import (
 // for running the blue/green load balancer. It can be used in production (main.go)
 // or in integration tests.
 type Application struct {
-	Config  *config.Config
-	Logger  *slog.Logger
-	Proxy   *proxy.Proxy
-	Health  *health.Checker
+	Config   *config.Config
+	Logger   *slog.Logger
+	Proxy    *proxy.Proxy
+	Health   *health.Checker
 	Switcher *switcher.Switcher
-	Metrics *metrics.Collector
-	Admin   *admin.Server
-	UI      *ui.Handlers
+	Metrics  *metrics.Collector
+	Admin    *admin.Server
+	UI       *ui.Handlers
 
-	gitWatcher *switcher.GitWatcher
-	ctx        context.Context
-	cancel     context.CancelFunc
+	// prometheusReg is stored to apply after Metrics is initialized
+	prometheusReg prometheus.Registerer
+
+	mu          sync.Mutex
+	gitWatcher  *switcher.GitWatcher
+	proxyServer *http.Server
+	ctx         context.Context
+	cancel      context.CancelFunc
+	started     bool
 }
 
 // Option configures the Application.
@@ -48,12 +55,11 @@ func WithLogger(logger *slog.Logger) Option {
 	}
 }
 
-// WithPrometheusRegistry registers metrics with a custom Prometheus registry.
+// WithPrometheusRegistry registers metrics with a Prometheus registry.
+// The registration happens after all components are initialized.
 func WithPrometheusRegistry(reg prometheus.Registerer) Option {
 	return func(a *Application) {
-		if a.Metrics != nil && reg != nil {
-			a.Metrics.Register(reg)
-		}
+		a.prometheusReg = reg
 	}
 }
 
@@ -107,12 +113,28 @@ func New(cfg *config.Config, opts ...Option) (*Application, error) {
 	// Add Prometheus metrics endpoint
 	app.Admin.Router().Handle("/metrics", promhttp.Handler())
 
+	// Register metrics with Prometheus if configured
+	if app.prometheusReg != nil {
+		if err := app.Metrics.Register(app.prometheusReg); err != nil {
+			app.Logger.Warn("failed to register prometheus metrics", "error", err)
+		}
+	}
+
 	return app, nil
 }
 
 // Start starts all application components.
+// This method is not safe to call multiple times without calling Stop() first.
 func (a *Application) Start(ctx context.Context) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if a.started {
+		return errors.New("application already started")
+	}
+
 	a.ctx, a.cancel = context.WithCancel(ctx)
+	a.started = true
 
 	// Start health checker
 	a.Health.Start(a.ctx)
@@ -134,23 +156,37 @@ func (a *Application) Start(ctx context.Context) error {
 
 // Stop stops all application components gracefully.
 func (a *Application) Stop() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
 	if a.cancel != nil {
 		a.cancel()
+		a.cancel = nil
+	}
+
+	if a.proxyServer != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		a.proxyServer.Shutdown(ctx)
+		cancel()
+		a.proxyServer = nil
 	}
 
 	if a.gitWatcher != nil {
 		a.gitWatcher.Stop()
+		a.gitWatcher = nil
 	}
 
-	a.UI.StopUpdates()
-	a.Health.Stop()
-	a.Admin.Stop()
-}
+	if a.UI != nil {
+		a.UI.StopUpdates()
+	}
+	if a.Health != nil {
+		a.Health.Stop()
+	}
+	if a.Admin != nil {
+		a.Admin.Stop()
+	}
 
-// Router returns the HTTP router for the admin/API server.
-// Use this to create an httptest.Server for integration tests.
-func (a *Application) Router() chi.Router {
-	return a.Admin.Router()
+	a.started = false
 }
 
 // Handler returns the HTTP handler for the admin/API server.
@@ -167,4 +203,32 @@ func (a *Application) ProxyHandler() http.Handler {
 // For Tailscale, use Admin.Start() directly.
 func (a *Application) StartAdminServer(ctx context.Context, addr string) error {
 	return a.Admin.LocalServer(ctx, addr)
+}
+
+// StartProxyServer starts the proxy server on the configured address.
+// Returns a channel that receives any error from ListenAndServe (or nil on clean shutdown).
+func (a *Application) StartProxyServer() <-chan error {
+	errCh := make(chan error, 1)
+
+	a.mu.Lock()
+	a.proxyServer = &http.Server{
+		Addr:         a.Config.Proxy.ListenAddr,
+		Handler:      a.Proxy,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
+	a.mu.Unlock()
+
+	go func() {
+		a.Logger.Info("proxy server starting", "addr", a.Config.Proxy.ListenAddr)
+		if err := a.proxyServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- err
+		} else {
+			errCh <- nil
+		}
+		close(errCh)
+	}()
+
+	return errCh
 }
