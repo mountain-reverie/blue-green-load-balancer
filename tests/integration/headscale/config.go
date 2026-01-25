@@ -1,5 +1,3 @@
-//go:build integration
-
 package headscale
 
 // generateHeadscaleConfig returns a minimal Headscale configuration for testing.

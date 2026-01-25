@@ -1,5 +1,3 @@
-//go:build integration
-
 package headscale
 
 import (
@@ -38,10 +36,10 @@ const (
 
 // E2ETestSuite holds all infrastructure for end-to-end testing.
 type E2ETestSuite struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	t          *testing.T
-	tmpDir     string
+	ctx    context.Context
+	cancel context.CancelFunc
+	t      *testing.T
+	tmpDir string
 	// gitBareDir is the bare repository used as the "remote" for the git watcher.
 	gitBareDir string
 	// gitWorkDir is the working copy used to make changes and push to bare repo.

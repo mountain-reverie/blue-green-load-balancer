@@ -1,5 +1,3 @@
-//go:build integration
-
 package headscale
 
 import (
@@ -25,11 +23,11 @@ import (
 )
 
 const (
-	testUser          = "testuser"
-	adminHostname     = "bluegreen-admin-test"
-	testClientName    = "test-client"
-	testTimeout       = 5 * time.Minute
-	peerWaitTimeout   = 2 * time.Minute
+	testUser        = "testuser"
+	adminHostname   = "bluegreen-admin-test"
+	testClientName  = "test-client"
+	testTimeout     = 5 * time.Minute
+	peerWaitTimeout = 2 * time.Minute
 )
 
 // TestSuite holds all Headscale test infrastructure.
