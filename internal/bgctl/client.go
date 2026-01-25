@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"tailscale.com/client/tailscale"
@@ -174,7 +175,7 @@ func (c *Client) TriggerRefresh(ctx context.Context) (*RefreshResponse, error) {
 	url := fmt.Sprintf("http://%s/api/webhook/refresh", c.hostname)
 	c.logger.Debug("triggering refresh", "url", url)
 
-	resp, err := c.post(ctx, url, "application/json", nil)
+	resp, err := c.post(ctx, url, "application/json", strings.NewReader("{}"))
 	if err != nil {
 		return nil, err
 	}
