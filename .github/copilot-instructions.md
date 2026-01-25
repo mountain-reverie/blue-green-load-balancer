@@ -13,7 +13,7 @@ This is a Go-based blue/green load balancer with the following characteristics:
 
 ### Go Style
 
-- Use Go 1.23+ features
+- Use Go 1.25+ features
 - Prefer `log/slog` over `log` package
 - Use `context.Context` for cancellation propagation
 - Follow standard Go error handling patterns

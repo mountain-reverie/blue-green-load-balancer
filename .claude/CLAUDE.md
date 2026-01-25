@@ -3,6 +3,7 @@
 ## Project Overview
 
 A Go-based blue/green load balancer that:
+
 - Proxies traffic between two local HTTP services (blue/green)
 - Exposes public traffic via Cloudflare Tunnel (externally configured)
 - Provides admin interface accessible only via Tailscale network
@@ -11,7 +12,7 @@ A Go-based blue/green load balancer that:
 
 ## Technology Stack
 
-- **Language**: Go 1.23+
+- **Language**: Go 1.25+
 - **HTTP Framework**: Huma v2 (REST API with auto OpenAPI generation)
 - **Templating**: templ + templUI (type-safe HTML templates)
 - **Tailscale**: tsnet (embedded Tailscale server)
