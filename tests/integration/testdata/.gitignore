@@ -1,0 +1,2 @@
+# Ignore failed test screenshots (generated during test runs)
+failed/*.png

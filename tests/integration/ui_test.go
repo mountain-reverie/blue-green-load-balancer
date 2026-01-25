@@ -32,18 +32,26 @@ import (
 
 var (
 	testBrowser     playwright.Browser
-	screenshotDir   string
 	testAdminServer *testAdminServerWrapper
 	testBlueServer  *httptest.Server
 	testGreenServer *httptest.Server
 )
 
+// testdataDir returns the path to the testdata directory relative to this test file.
+func testdataDir() string {
+	return filepath.Join("testdata")
+}
+
+// failedScreenshotDir returns the path to store failed test screenshots.
+func failedScreenshotDir() string {
+	return filepath.Join(testdataDir(), "failed")
+}
+
 func TestMain(m *testing.M) {
 	var err error
 
-	// Create screenshot directory for debugging failures
-	screenshotDir, err = os.MkdirTemp("", "bluegreen-ui-screenshots-*")
-	if err != nil {
+	// Ensure testdata/failed directory exists for screenshots
+	if err := os.MkdirAll(failedScreenshotDir(), 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to create screenshot dir: %v\n", err)
 		os.Exit(1)
 	}
@@ -52,7 +60,6 @@ func TestMain(m *testing.M) {
 	err = playwrightcigo.Install(playwrightcigo.WithTimeout(2 * time.Minute))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to install Playwright: %v\n", err)
-		os.RemoveAll(screenshotDir)
 		os.Exit(1)
 	}
 
@@ -67,7 +74,6 @@ func TestMain(m *testing.M) {
 		testBlueServer.Close()
 		testGreenServer.Close()
 		playwrightcigo.Uninstall()
-		os.RemoveAll(screenshotDir)
 		os.Exit(1)
 	}
 
@@ -79,7 +85,6 @@ func TestMain(m *testing.M) {
 		testBlueServer.Close()
 		testGreenServer.Close()
 		playwrightcigo.Uninstall()
-		os.RemoveAll(screenshotDir)
 		os.Exit(1)
 	}
 
@@ -91,7 +96,6 @@ func TestMain(m *testing.M) {
 	testBlueServer.Close()
 	testGreenServer.Close()
 	playwrightcigo.Uninstall()
-	os.RemoveAll(screenshotDir)
 
 	os.Exit(code)
 }
@@ -239,18 +243,34 @@ func waitForHealthChecks(h *health.Checker, timeout time.Duration) {
 	}
 }
 
-// takeScreenshotOnFailure takes a screenshot if the test has failed.
-func takeScreenshotOnFailure(t *testing.T, page playwright.Page) {
-	if t.Failed() {
-		screenshotPath := filepath.Join(screenshotDir, fmt.Sprintf("%s.png", t.Name()))
-		screenshot, err := page.Screenshot(playwright.PageScreenshotOptions{
-			Path: playwright.String(screenshotPath),
-		})
-		if err != nil {
-			t.Logf("failed to take screenshot: %v", err)
-		} else if len(screenshot) > 0 {
-			t.Logf("screenshot saved to: %s", screenshotPath)
-		}
+// screenshotPath returns the path for a test's screenshot in testdata/failed/.
+func screenshotPath(testName string) string {
+	// Sanitize test name for use as filename (replace / with _)
+	safeName := strings.ReplaceAll(testName, "/", "_")
+	return filepath.Join(failedScreenshotDir(), fmt.Sprintf("%s.png", safeName))
+}
+
+// manageScreenshot takes a screenshot during the test run.
+// If the test passes, the screenshot is removed.
+// If the test fails, the screenshot is kept for debugging.
+func manageScreenshot(t *testing.T, page playwright.Page) {
+	path := screenshotPath(t.Name())
+
+	// Always take a screenshot
+	_, err := page.Screenshot(playwright.PageScreenshotOptions{
+		Path:     playwright.String(path),
+		FullPage: playwright.Bool(true),
+	})
+	if err != nil {
+		t.Logf("failed to take screenshot: %v", err)
+		return
+	}
+
+	// If test passed, remove the screenshot
+	if !t.Failed() {
+		os.Remove(path)
+	} else {
+		t.Logf("screenshot saved to: %s", path)
 	}
 }
 
@@ -258,7 +278,7 @@ func TestDashboardLoads(t *testing.T) {
 	page, err := testBrowser.NewPage()
 	require.NoError(t, err, "failed to create new page")
 	defer page.Close()
-	defer takeScreenshotOnFailure(t, page)
+	defer manageScreenshot(t, page)
 
 	// Navigate to the dashboard
 	_, err = page.Goto(testAdminServer.URL)
@@ -301,7 +321,7 @@ func TestStatusSection(t *testing.T) {
 	page, err := testBrowser.NewPage()
 	require.NoError(t, err, "failed to create new page")
 	defer page.Close()
-	defer takeScreenshotOnFailure(t, page)
+	defer manageScreenshot(t, page)
 
 	// Navigate to the dashboard
 	_, err = page.Goto(testAdminServer.URL)
@@ -365,7 +385,7 @@ func TestMetricsSection(t *testing.T) {
 	page, err := testBrowser.NewPage()
 	require.NoError(t, err, "failed to create new page")
 	defer page.Close()
-	defer takeScreenshotOnFailure(t, page)
+	defer manageScreenshot(t, page)
 
 	// Navigate to the dashboard
 	_, err = page.Goto(testAdminServer.URL)
@@ -439,7 +459,7 @@ func TestSwitchControls(t *testing.T) {
 	page, err := testBrowser.NewPage()
 	require.NoError(t, err, "failed to create new page")
 	defer page.Close()
-	defer takeScreenshotOnFailure(t, page)
+	defer manageScreenshot(t, page)
 
 	// Navigate to the dashboard
 	_, err = page.Goto(testAdminServer.URL)
@@ -489,7 +509,7 @@ func TestSSEConnection(t *testing.T) {
 	page, err := testBrowser.NewPage()
 	require.NoError(t, err, "failed to create new page")
 	defer page.Close()
-	defer takeScreenshotOnFailure(t, page)
+	defer manageScreenshot(t, page)
 
 	// Navigate to the dashboard
 	_, err = page.Goto(testAdminServer.URL)
@@ -564,7 +584,7 @@ func TestHistorySection(t *testing.T) {
 	page, err := testBrowser.NewPage()
 	require.NoError(t, err, "failed to create new page")
 	defer page.Close()
-	defer takeScreenshotOnFailure(t, page)
+	defer manageScreenshot(t, page)
 
 	// Navigate to the dashboard
 	_, err = page.Goto(testAdminServer.URL)
@@ -613,7 +633,7 @@ func TestDashboardResponsiveness(t *testing.T) {
 	page, err := testBrowser.NewPage()
 	require.NoError(t, err, "failed to create new page")
 	defer page.Close()
-	defer takeScreenshotOnFailure(t, page)
+	defer manageScreenshot(t, page)
 
 	// Test with different viewport sizes
 	viewports := []struct {
@@ -660,7 +680,7 @@ func TestDashboardAccessibility(t *testing.T) {
 	page, err := testBrowser.NewPage()
 	require.NoError(t, err, "failed to create new page")
 	defer page.Close()
-	defer takeScreenshotOnFailure(t, page)
+	defer manageScreenshot(t, page)
 
 	_, err = page.Goto(testAdminServer.URL)
 	require.NoError(t, err, "failed to navigate to dashboard")
