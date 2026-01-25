@@ -4,7 +4,9 @@ package integration
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -121,6 +123,7 @@ type testAdminServerWrapper struct {
 	cancel     context.CancelFunc
 	health     *health.Checker
 	uiHandlers *ui.Handlers
+	switcher   *switcher.Switcher
 }
 
 // Close closes the server and performs cleanup.
@@ -193,6 +196,36 @@ func createTestAdminServer(blueURL, greenURL string) (*testAdminServerWrapper, e
 	router := chi.NewRouter()
 	uiHandlers.RegisterRoutes(router)
 
+	// Add switch API endpoint for testing
+	router.Post("/api/switch", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Target string `json:"target"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		var target config.ServiceTarget
+		switch req.Target {
+		case "blue":
+			target = config.ServiceBlue
+		case "green":
+			target = config.ServiceGreen
+		default:
+			http.Error(w, "invalid target", http.StatusBadRequest)
+			return
+		}
+
+		if err := sw.Switch(r.Context(), target, switcher.TriggerManual); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok", "active": req.Target})
+	})
+
 	// Serve static files from project root
 	staticDir := findStaticDir()
 	if staticDir != "" {
@@ -206,6 +239,7 @@ func createTestAdminServer(blueURL, greenURL string) (*testAdminServerWrapper, e
 		cancel:     cancel,
 		health:     h,
 		uiHandlers: uiHandlers,
+		switcher:   sw,
 	}, nil
 }
 
@@ -255,6 +289,19 @@ func failedScreenshotPath(testName string) string {
 	// Sanitize test name for use as filename (replace / with _)
 	safeName := strings.ReplaceAll(testName, "/", "_")
 	return filepath.Join(failedScreenshotDir(), fmt.Sprintf("%s.png", safeName))
+}
+
+// saveNamedScreenshot saves a screenshot with a specific name to testdata/.
+// Use this for capturing specific states (e.g., before/after a switch).
+func saveNamedScreenshot(t *testing.T, page playwright.Page, name string) {
+	path := filepath.Join(testdataDir(), fmt.Sprintf("%s.png", name))
+	_, err := page.Screenshot(playwright.PageScreenshotOptions{
+		Path:     playwright.String(path),
+		FullPage: playwright.Bool(true),
+	})
+	if err != nil {
+		t.Logf("failed to take screenshot %s: %v", name, err)
+	}
 }
 
 // manageScreenshot takes a screenshot during the test run.
@@ -473,7 +520,6 @@ func TestSwitchControls(t *testing.T) {
 	page, err := testBrowser.NewPage()
 	require.NoError(t, err, "failed to create new page")
 	defer page.Close()
-	defer manageScreenshot(t, page)
 
 	// Navigate to the dashboard
 	_, err = page.Goto(testAdminServer.URL)
@@ -485,38 +531,51 @@ func TestSwitchControls(t *testing.T) {
 	})
 	require.NoError(t, err, "failed to wait for DOM content loaded")
 
-	// Check for Switch Controls section - it may or may not be rendered depending on the dashboard state
-	// The SwitchControls template exists but may not be included in the main page by default
-	switchControlsSectionVisible, err := page.Locator("section:has(h2:text('Switch Controls'))").IsVisible()
-	require.NoError(t, err, "failed to check switch controls section")
-
-	if switchControlsSectionVisible {
-		// If switch controls are visible, verify the buttons
-		switchToBlueVisible, err := page.Locator("button:text('Switch to Blue')").IsVisible()
-		require.NoError(t, err, "failed to check switch to blue button visibility")
-		assert.True(t, switchToBlueVisible, "switch to blue button should be visible when controls are shown")
-
-		switchToGreenVisible, err := page.Locator("button:text('Switch to Green')").IsVisible()
-		require.NoError(t, err, "failed to check switch to green button visibility")
-		assert.True(t, switchToGreenVisible, "switch to green button should be visible when controls are shown")
-
-		// Verify buttons have HTMX attributes for POST requests
-		switchToBlueHxPost, err := page.Locator("button:text('Switch to Blue')").GetAttribute("hx-post")
-		require.NoError(t, err, "failed to get hx-post attribute for blue button")
-		assert.Equal(t, "/api/switch", switchToBlueHxPost, "switch to blue button should POST to /api/switch")
-
-		switchToGreenHxPost, err := page.Locator("button:text('Switch to Green')").GetAttribute("hx-post")
-		require.NoError(t, err, "failed to get hx-post attribute for green button")
-		assert.Equal(t, "/api/switch", switchToGreenHxPost, "switch to green button should POST to /api/switch")
-	} else {
-		// Switch controls not visible - this is acceptable as they may be conditionally rendered
-		t.Log("Switch controls section not visible in current dashboard state")
-	}
-
-	// Verify the active service can be identified for potential switching
+	// Verify we start with blue as the active service
 	activeService, err := page.Locator("#active-service").TextContent()
 	require.NoError(t, err, "failed to get active service")
-	assert.Contains(t, []string{"blue", "green"}, activeService, "active service should be either blue or green")
+	assert.Equal(t, "blue", activeService, "should start with blue as active service")
+
+	// Take "before" screenshot showing blue is active
+	saveNamedScreenshot(t, page, "TestSwitchControls_BeforeSwitch")
+
+	// Verify the blue service card has the active styling (border-blue-500)
+	blueCardVisible, err := page.Locator("div.border-blue-500").IsVisible()
+	require.NoError(t, err, "failed to check blue card visibility")
+	assert.True(t, blueCardVisible, "blue service card should be visible with blue border")
+
+	// Switch to green via API
+	switchReq := map[string]string{"target": "green"}
+	switchBody, _ := json.Marshal(switchReq)
+	resp, err := http.Post(testAdminServer.URL+"/api/switch", "application/json", bytes.NewReader(switchBody))
+	require.NoError(t, err, "failed to call switch API")
+	require.Equal(t, http.StatusOK, resp.StatusCode, "switch API should return 200 OK")
+	resp.Body.Close()
+
+	// Reload the page to see the updated state
+	_, err = page.Reload()
+	require.NoError(t, err, "failed to reload page")
+
+	err = page.WaitForLoadState(playwright.PageWaitForLoadStateOptions{
+		State: playwright.LoadStateDomcontentloaded,
+	})
+	require.NoError(t, err, "failed to wait for DOM content loaded after reload")
+
+	// Verify green is now the active service
+	activeServiceAfter, err := page.Locator("#active-service").TextContent()
+	require.NoError(t, err, "failed to get active service after switch")
+	assert.Equal(t, "green", activeServiceAfter, "green should be active after switch")
+
+	// Verify the green service card styling indicates it's the active one
+	greenCardVisible, err := page.Locator("div.border-green-500").IsVisible()
+	require.NoError(t, err, "failed to check green card visibility")
+	assert.True(t, greenCardVisible, "green service card should be visible with green border")
+
+	// Take "after" screenshot showing green is now active
+	saveNamedScreenshot(t, page, "TestSwitchControls_AfterSwitch")
+
+	// Also save the final state as the default screenshot for this test
+	manageScreenshot(t, page)
 }
 
 func TestSSEConnection(t *testing.T) {
