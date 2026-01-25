@@ -1,9 +1,12 @@
 package headscale
 
+import "fmt"
+
 // generateHeadscaleConfig returns a minimal Headscale configuration for testing.
-func generateHeadscaleConfig() string {
-	return `
-server_url: http://headscale:8080
+// serverURL should be the externally accessible URL (e.g., http://localhost:32768).
+func generateHeadscaleConfig(serverURL string) string {
+	return fmt.Sprintf(`
+server_url: %s
 listen_addr: 0.0.0.0:8080
 metrics_listen_addr: 0.0.0.0:9090
 grpc_listen_addr: 0.0.0.0:50443
@@ -23,15 +26,28 @@ prefixes:
 
 derp:
   server:
-    enabled: true
-    region_id: 999
-    region_code: "test"
-    region_name: "Test"
-    stun_listen_addr: 0.0.0.0:3478
-  urls: []
+    enabled: false
+  urls:
+    - https://controlplane.tailscale.com/derpmap/default
 
 dns:
   magic_dns: true
   base_domain: test.headscale.net
-`
+
+policy:
+  path: /etc/headscale/acl.json
+`, serverURL)
+}
+
+// generateHeadscaleACL returns a permissive ACL policy for testing.
+func generateHeadscaleACL() string {
+	return `{
+  "acls": [
+    {
+      "action": "accept",
+      "src": ["*"],
+      "dst": ["*:*"]
+    }
+  ]
+}`
 }

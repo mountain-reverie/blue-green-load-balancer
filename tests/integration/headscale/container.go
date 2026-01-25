@@ -1,9 +1,9 @@
 package headscale
 
 import (
-	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -19,21 +19,36 @@ type Container struct {
 	URL string // http://host:port
 }
 
+// headscaleTestPort is the fixed port used for Headscale in tests.
+// Using a fixed port simplifies config generation (server_url needs to be known at startup).
+const headscaleTestPort = "19080"
+
 // StartHeadscale starts a Headscale container for testing.
 func StartHeadscale(ctx context.Context) (*Container, error) {
-	configContent := generateHeadscaleConfig()
+	// Use localhost with fixed port for the server URL
+	serverURL := fmt.Sprintf("http://localhost:%s", headscaleTestPort)
+	configContent := generateHeadscaleConfig(serverURL)
+
+	aclContent := generateHeadscaleACL()
 
 	req := testcontainers.ContainerRequest{
 		Image:        "headscale/headscale:0.23",
-		ExposedPorts: []string{"8080/tcp", "3478/udp"},
+		ExposedPorts: []string{headscaleTestPort + ":8080/tcp"},
 		Cmd:          []string{"serve"},
-		Files: []testcontainers.ContainerFile{{
-			Reader:            strings.NewReader(configContent),
-			ContainerFilePath: "/etc/headscale/config.yaml",
-			FileMode:          0644,
-		}},
+		Files: []testcontainers.ContainerFile{
+			{
+				Reader:            strings.NewReader(configContent),
+				ContainerFilePath: "/etc/headscale/config.yaml",
+				FileMode:          0644,
+			},
+			{
+				Reader:            strings.NewReader(aclContent),
+				ContainerFilePath: "/etc/headscale/acl.json",
+				FileMode:          0644,
+			},
+		},
 		WaitingFor: wait.ForAll(
-			wait.ForLog("Listening on"),
+			wait.ForLog("listening and serving HTTP on"),
 			wait.ForListeningPort("8080/tcp"),
 		).WithDeadline(60 * time.Second),
 	}
@@ -47,21 +62,9 @@ func StartHeadscale(ctx context.Context) (*Container, error) {
 		return nil, fmt.Errorf("starting Headscale container: %w", err)
 	}
 
-	host, err := container.Host(ctx)
-	if err != nil {
-		container.Terminate(ctx)
-		return nil, fmt.Errorf("getting Headscale host: %w", err)
-	}
-
-	port, err := container.MappedPort(ctx, "8080")
-	if err != nil {
-		container.Terminate(ctx)
-		return nil, fmt.Errorf("getting Headscale port: %w", err)
-	}
-
 	return &Container{
 		Container: container,
-		URL:       fmt.Sprintf("http://%s:%s", host, port.Port()),
+		URL:       serverURL,
 	}, nil
 }
 
@@ -77,6 +80,11 @@ func (h *Container) CreateUser(ctx context.Context, username string) error {
 	return nil
 }
 
+// preauthKeyResponse represents the JSON response from headscale preauthkeys create.
+type preauthKeyResponse struct {
+	Key string `json:"key"`
+}
+
 // CreatePreauthKey creates a reusable, ephemeral preauth key for a user.
 func (h *Container) CreatePreauthKey(ctx context.Context, user string) (string, error) {
 	exitCode, reader, err := h.Exec(ctx, []string{
@@ -85,6 +93,7 @@ func (h *Container) CreatePreauthKey(ctx context.Context, user string) (string, 
 		"--reusable",
 		"--ephemeral",
 		"--expiration", "1h",
+		"-o", "json",
 	})
 	if err != nil {
 		return "", fmt.Errorf("executing preauthkey create: %w", err)
@@ -98,41 +107,24 @@ func (h *Container) CreatePreauthKey(ctx context.Context, user string) (string, 
 		return "", fmt.Errorf("reading exec output: %w", err)
 	}
 
-	key, err := parseKeyFromOutput(buf.String())
-	if err != nil {
-		return "", fmt.Errorf("parsing key from output: %w", err)
+	// Docker exec output may contain multiplexed stream headers.
+	// Find the start of JSON content.
+	output := buf.Bytes()
+	jsonStart := bytes.Index(output, []byte("{"))
+	if jsonStart == -1 {
+		return "", fmt.Errorf("no JSON found in output: %s", buf.String())
 	}
 
-	return key, nil
-}
-
-// parseKeyFromOutput extracts the preauth key from Headscale CLI output.
-// The output format varies by version, so we try multiple patterns.
-func parseKeyFromOutput(output string) (string, error) {
-	// Pattern 1: Key is on a line by itself (newer versions)
-	// Pattern 2: Key follows "key:" or "Key:" label
-	// Pattern 3: Key is in a table format
-
-	// Keys typically start with certain prefixes
-	keyPatterns := []*regexp.Regexp{
-		regexp.MustCompile(`([a-f0-9]{48})`),                     // 48-char hex key
-		regexp.MustCompile(`(nodekey:[a-f0-9]+)`),                // nodekey format
-		regexp.MustCompile(`(?i)key[:\s]+([a-f0-9]{48})`),        // labeled key
-		regexp.MustCompile(`\|\s*([a-f0-9]{48})\s*\|`),           // table format
-		regexp.MustCompile(`([a-zA-Z0-9]{43,})`),                 // base64-like key
+	var resp preauthKeyResponse
+	if err := json.Unmarshal(output[jsonStart:], &resp); err != nil {
+		return "", fmt.Errorf("parsing JSON response: %w (output: %s)", err, string(output[jsonStart:]))
 	}
 
-	scanner := bufio.NewScanner(strings.NewReader(output))
-	for scanner.Scan() {
-		line := scanner.Text()
-		for _, pattern := range keyPatterns {
-			if matches := pattern.FindStringSubmatch(line); len(matches) > 1 {
-				return matches[1], nil
-			}
-		}
+	if resp.Key == "" {
+		return "", fmt.Errorf("empty key in response: %s", buf.String())
 	}
 
-	return "", fmt.Errorf("no key found in output: %s", output)
+	return resp.Key, nil
 }
 
 // GetTailscaleIP retrieves the Tailscale IP for a given hostname.
