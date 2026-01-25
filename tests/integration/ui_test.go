@@ -210,10 +210,23 @@ func failedScreenshotPath(testName string) string {
 	return filepath.Join(failedScreenshotDir(), fmt.Sprintf("%s.png", safeName))
 }
 
+// shouldUpdateBaselines returns true if baseline screenshots should be updated.
+// Set UPDATE_BASELINES=1 environment variable to force baseline updates.
+func shouldUpdateBaselines() bool {
+	return os.Getenv("UPDATE_BASELINES") == "1"
+}
+
 // saveNamedScreenshot saves a screenshot with a specific name to testdata/.
 // Use this for capturing specific states (e.g., before/after a switch).
+// Only saves if the baseline doesn't exist or UPDATE_BASELINES=1 is set.
 func saveNamedScreenshot(t *testing.T, page playwright.Page, name string) {
 	path := filepath.Join(testdataDir(), fmt.Sprintf("%s.png", name))
+
+	// Skip if baseline exists and we're not updating
+	if _, err := os.Stat(path); err == nil && !shouldUpdateBaselines() {
+		return
+	}
+
 	_, err := page.Screenshot(playwright.PageScreenshotOptions{
 		Path:     playwright.String(path),
 		FullPage: playwright.Bool(true),
@@ -224,23 +237,25 @@ func saveNamedScreenshot(t *testing.T, page playwright.Page, name string) {
 }
 
 // manageScreenshot takes a screenshot during the test run.
-// Always saves a baseline screenshot to testdata/ (for documentation/comparison).
-// If the test fails, also saves to testdata/failed/ for debugging.
+// Saves a baseline screenshot to testdata/ only if it doesn't exist or UPDATE_BASELINES=1.
+// If the test fails, saves to testdata/failed/ for debugging.
 func manageScreenshot(t *testing.T, page playwright.Page) {
 	baselinePath := baselineScreenshotPath(t.Name())
 	failedPath := failedScreenshotPath(t.Name())
 
-	// Always take a baseline screenshot
-	_, err := page.Screenshot(playwright.PageScreenshotOptions{
-		Path:     playwright.String(baselinePath),
-		FullPage: playwright.Bool(true),
-	})
-	if err != nil {
-		t.Logf("failed to take baseline screenshot: %v", err)
-		return
+	// Save baseline only if it doesn't exist or we're updating baselines
+	_, statErr := os.Stat(baselinePath)
+	if os.IsNotExist(statErr) || shouldUpdateBaselines() {
+		_, err := page.Screenshot(playwright.PageScreenshotOptions{
+			Path:     playwright.String(baselinePath),
+			FullPage: playwright.Bool(true),
+		})
+		if err != nil {
+			t.Logf("failed to take baseline screenshot: %v", err)
+		}
 	}
 
-	// If test failed, also save to failed directory for easy comparison
+	// If test failed, save to failed directory for easy comparison
 	if t.Failed() {
 		_, err := page.Screenshot(playwright.PageScreenshotOptions{
 			Path:     playwright.String(failedPath),
