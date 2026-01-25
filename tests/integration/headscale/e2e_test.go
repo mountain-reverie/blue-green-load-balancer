@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/go-git/go-git/v5"
+	gitconfig "github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -41,7 +42,10 @@ type E2ETestSuite struct {
 	cancel     context.CancelFunc
 	t          *testing.T
 	tmpDir     string
-	gitRepoDir string
+	// gitBareDir is the bare repository used as the "remote" for the git watcher.
+	gitBareDir string
+	// gitWorkDir is the working copy used to make changes and push to bare repo.
+	gitWorkDir string
 
 	headscale  *Container
 	app        *app.Application
@@ -118,14 +122,14 @@ func setupE2ETestSuite(t *testing.T) *E2ETestSuite {
 		t.Fatalf("failed to create client preauth key: %v", err)
 	}
 
-	// 3. Create local git repository with tags
+	// 3. Create local git repository with tags (bare repo + working copy)
 	t.Log("Step 3: Creating local git repository with deploy tags...")
-	suite.gitRepoDir, err = createE2EGitRepo(t, suite.tmpDir)
+	suite.gitBareDir, suite.gitWorkDir, err = createE2EGitRepo(t, suite.tmpDir)
 	if err != nil {
 		suite.Cleanup()
 		t.Fatalf("failed to create git repository: %v", err)
 	}
-	t.Logf("Git repo created at %s", suite.gitRepoDir)
+	t.Logf("Git bare repo at %s, working copy at %s", suite.gitBareDir, suite.gitWorkDir)
 
 	// 4. Create mock backend servers
 	t.Log("Step 4: Creating mock backend configuration...")
@@ -150,9 +154,9 @@ func setupE2ETestSuite(t *testing.T) *E2ETestSuite {
 			DrainTimeout: 5 * time.Second,
 		},
 		Git: config.GitConfig{
-			RepoURL:      "file://" + suite.gitRepoDir,
+			RepoURL:      "file://" + suite.gitBareDir,
 			PollInterval: e2eGitPollInterval,
-			Branch:       "main",
+			Branch:       "master", // go-git defaults to master
 		},
 		Deploy: config.DeployConfig{
 			BlueTag:   "deploy/blue",
@@ -256,11 +260,11 @@ func (s *E2ETestSuite) adminURL(path string) string {
 	return "http://e2e-admin:80" + path
 }
 
-// updateGitTag moves a deploy tag to a new commit.
+// updateGitTag moves a deploy tag to a new commit in the working copy and pushes to bare repo.
 func (s *E2ETestSuite) updateGitTag(tagName, content string) error {
-	repo, err := git.PlainOpen(s.gitRepoDir)
+	repo, err := git.PlainOpen(s.gitWorkDir)
 	if err != nil {
-		return fmt.Errorf("opening git repo: %w", err)
+		return fmt.Errorf("opening git work repo: %w", err)
 	}
 
 	worktree, err := repo.Worktree()
@@ -269,7 +273,7 @@ func (s *E2ETestSuite) updateGitTag(tagName, content string) error {
 	}
 
 	// Update file content
-	filePath := filepath.Join(s.gitRepoDir, "deploy.txt")
+	filePath := filepath.Join(s.gitWorkDir, "deploy.txt")
 	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
 		return fmt.Errorf("writing deploy.txt: %w", err)
 	}
@@ -289,11 +293,29 @@ func (s *E2ETestSuite) updateGitTag(tagName, content string) error {
 		return fmt.Errorf("committing changes: %w", err)
 	}
 
-	// Delete old tag (ignore error if doesn't exist)
+	// Delete old tag locally (ignore error if doesn't exist)
 	_ = repo.DeleteTag(tagName)
 
+	// Create new tag locally
 	if _, err = repo.CreateTag(tagName, commit, nil); err != nil {
 		return fmt.Errorf("creating tag %s: %w", tagName, err)
+	}
+
+	// Push the commit and tag to the bare repo (origin)
+	if err = repo.Push(&git.PushOptions{
+		RemoteName: "origin",
+		RefSpecs:   []gitconfig.RefSpec{gitconfig.RefSpec("+refs/heads/master:refs/heads/master")},
+	}); err != nil && err != git.NoErrAlreadyUpToDate {
+		return fmt.Errorf("pushing commits: %w", err)
+	}
+
+	// Push the tag (force to update existing tag)
+	tagRefSpec := gitconfig.RefSpec(fmt.Sprintf("+refs/tags/%s:refs/tags/%s", tagName, tagName))
+	if err = repo.Push(&git.PushOptions{
+		RemoteName: "origin",
+		RefSpecs:   []gitconfig.RefSpec{tagRefSpec},
+	}); err != nil && err != git.NoErrAlreadyUpToDate {
+		return fmt.Errorf("pushing tag %s: %w", tagName, err)
 	}
 
 	return nil
@@ -364,30 +386,49 @@ func (s *E2ETestSuite) triggerWebhookRefresh() (*RefreshResponse, error) {
 	return &result, nil
 }
 
-// createE2EGitRepo creates a git repository for E2E testing.
-func createE2EGitRepo(t *testing.T, baseDir string) (string, error) {
+// createE2EGitRepo creates a bare repository and a working copy for E2E testing.
+// Returns (bareDir, workDir, error). The bare repo acts as the "remote" that
+// the git watcher fetches from. The working copy is used to make changes and push.
+func createE2EGitRepo(t *testing.T, baseDir string) (string, string, error) {
 	t.Helper()
 
-	repoDir := filepath.Join(baseDir, "git-repo")
+	bareDir := filepath.Join(baseDir, "git-bare.git")
+	workDir := filepath.Join(baseDir, "git-work")
 
-	repo, err := git.PlainInit(repoDir, false)
+	// 1. Create bare repository (the "remote")
+	_, err := git.PlainInit(bareDir, true) // true = bare
 	if err != nil {
-		return "", fmt.Errorf("initializing git repo: %w", err)
+		return "", "", fmt.Errorf("initializing bare repo: %w", err)
 	}
 
-	// Create initial file
-	filePath := filepath.Join(repoDir, "deploy.txt")
+	// 2. Create working repository
+	workRepo, err := git.PlainInit(workDir, false)
+	if err != nil {
+		return "", "", fmt.Errorf("initializing work repo: %w", err)
+	}
+
+	// 3. Add the bare repo as origin remote
+	_, err = workRepo.CreateRemote(&gitconfig.RemoteConfig{
+		Name: "origin",
+		URLs: []string{bareDir},
+	})
+	if err != nil {
+		return "", "", fmt.Errorf("creating origin remote: %w", err)
+	}
+
+	// 4. Create initial file and commit
+	filePath := filepath.Join(workDir, "deploy.txt")
 	if err := os.WriteFile(filePath, []byte("initial"), 0644); err != nil {
-		return "", fmt.Errorf("writing deploy.txt: %w", err)
+		return "", "", fmt.Errorf("writing deploy.txt: %w", err)
 	}
 
-	worktree, err := repo.Worktree()
+	worktree, err := workRepo.Worktree()
 	if err != nil {
-		return "", fmt.Errorf("getting worktree: %w", err)
+		return "", "", fmt.Errorf("getting worktree: %w", err)
 	}
 
 	if _, err := worktree.Add("deploy.txt"); err != nil {
-		return "", fmt.Errorf("staging deploy.txt: %w", err)
+		return "", "", fmt.Errorf("staging deploy.txt: %w", err)
 	}
 
 	commit, err := worktree.Commit("Initial commit", &git.CommitOptions{
@@ -398,21 +439,40 @@ func createE2EGitRepo(t *testing.T, baseDir string) (string, error) {
 		},
 	})
 	if err != nil {
-		return "", fmt.Errorf("creating initial commit: %w", err)
+		return "", "", fmt.Errorf("creating initial commit: %w", err)
 	}
 
-	// Create deploy/blue tag
-	if _, err := repo.CreateTag("deploy/blue", commit, nil); err != nil {
-		return "", fmt.Errorf("creating deploy/blue tag: %w", err)
+	// 5. Create deploy tags
+	if _, err := workRepo.CreateTag("deploy/blue", commit, nil); err != nil {
+		return "", "", fmt.Errorf("creating deploy/blue tag: %w", err)
+	}
+	if _, err := workRepo.CreateTag("deploy/green", commit, nil); err != nil {
+		return "", "", fmt.Errorf("creating deploy/green tag: %w", err)
 	}
 
-	// Create deploy/green tag
-	if _, err := repo.CreateTag("deploy/green", commit, nil); err != nil {
-		return "", fmt.Errorf("creating deploy/green tag: %w", err)
+	// 6. Push everything to the bare repo
+	err = workRepo.Push(&git.PushOptions{
+		RemoteName: "origin",
+		RefSpecs:   []gitconfig.RefSpec{gitconfig.RefSpec("+refs/heads/master:refs/heads/master")},
+	})
+	if err != nil && err != git.NoErrAlreadyUpToDate {
+		return "", "", fmt.Errorf("pushing initial commit: %w", err)
 	}
 
-	t.Logf("Created git repo with tags at commit %s", commit.String()[:8])
-	return repoDir, nil
+	// Push tags
+	err = workRepo.Push(&git.PushOptions{
+		RemoteName: "origin",
+		RefSpecs: []gitconfig.RefSpec{
+			gitconfig.RefSpec("+refs/tags/deploy/blue:refs/tags/deploy/blue"),
+			gitconfig.RefSpec("+refs/tags/deploy/green:refs/tags/deploy/green"),
+		},
+	})
+	if err != nil && err != git.NoErrAlreadyUpToDate {
+		return "", "", fmt.Errorf("pushing tags: %w", err)
+	}
+
+	t.Logf("Created git repos: bare=%s, work=%s, commit=%s", bareDir, workDir, commit.String()[:8])
+	return bareDir, workDir, nil
 }
 
 // pollUntil polls a condition function until it returns true or the context is canceled.
@@ -534,19 +594,12 @@ func TestE2EGitWebhookHeadscale(t *testing.T) {
 			return status.Git.GreenCommit != initialGreenCommit, nil
 		})
 
-		if err != nil {
-			if errors.Is(err, context.DeadlineExceeded) {
-				// file:// URLs don't support remote fetch operations in go-git.
-				// The webhook endpoint and git watcher work correctly, but the test
-				// cannot verify tag changes with local file:// repositories.
-				// Skip rather than silently pass to make this limitation explicit.
-				t.Skipf("skipping: file:// URL does not support remote fetch (green_commit=%s)", finalStatus.Git.GreenCommit)
-			}
-			require.NoError(t, err, "error while polling for status change")
-		}
+		require.NoError(t, err, "green commit should change after tag update and webhook refresh")
 
 		t.Logf("Green commit changed as expected: %s -> %s",
 			initialGreenCommit, finalStatus.Git.GreenCommit)
+		assert.NotEqual(t, initialGreenCommit, finalStatus.Git.GreenCommit,
+			"green commit should have changed")
 	})
 
 	// --- Test 5: No switch when target equals current ---
@@ -678,18 +731,8 @@ func TestE2EWebhookTriggersGitRefresh(t *testing.T) {
 		return newLastFetch != initialLastFetch, nil
 	})
 
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			// This could happen if the git watcher doesn't update last_fetch
-			// Log the situation but don't fail - the webhook endpoint worked
-			t.Logf("Warning: last_fetch did not change within timeout")
-			t.Logf("Initial: %s, Current: %s", initialLastFetch, newLastFetch)
-		} else {
-			require.NoError(t, err, "error while polling for last_fetch change")
-		}
-	} else {
-		t.Logf("last_fetch changed as expected: %s -> %s", initialLastFetch, newLastFetch)
-	}
+	require.NoError(t, err, "last_fetch should change after webhook refresh")
+	t.Logf("last_fetch changed as expected: %s -> %s", initialLastFetch, newLastFetch)
 }
 
 // TestE2EMultipleGitTagUpdates verifies that multiple rapid tag updates are handled correctly.
