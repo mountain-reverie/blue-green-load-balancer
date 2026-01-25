@@ -7,7 +7,7 @@ require (
 	github.com/danielgtaylor/huma/v2 v2.35.0
 	github.com/go-chi/chi/v5 v5.2.4
 	github.com/go-git/go-git/v5 v5.16.4
-	github.com/mountain-reverie/playwright-ci-go v0.0.0
+	github.com/mountain-reverie/playwright-ci-go v0.5200.69
 	github.com/playwright-community/playwright-go v0.5200.1
 	github.com/prometheus/client_golang v1.23.2
 	github.com/stretchr/testify v1.11.1
@@ -15,8 +15,6 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 	tailscale.com v1.94.1
 )
-
-replace github.com/mountain-reverie/playwright-ci-go => ../playwright-ci-go
 
 require (
 	dario.cat/mergo v1.0.2 // indirect

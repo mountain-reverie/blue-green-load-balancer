@@ -56,8 +56,8 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	// Install Playwright container
-	err = playwrightcigo.Install(playwrightcigo.WithTimeout(2 * time.Minute))
+	// Install Playwright container (5 min timeout for initial pull)
+	err = playwrightcigo.Install(playwrightcigo.WithTimeout(5 * time.Minute))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to install Playwright: %v\n", err)
 		os.Exit(1)
@@ -77,10 +77,10 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	// Initialize Playwright with Firefox
-	testBrowser, err = playwrightcigo.Firefox()
+	// Initialize Playwright with Chromium (more stable in containers)
+	testBrowser, err = playwrightcigo.Chromium()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to initialize Playwright Firefox: %v\n", err)
+		fmt.Fprintf(os.Stderr, "failed to initialize Playwright Chromium: %v\n", err)
 		testAdminServer.Close()
 		testBlueServer.Close()
 		testGreenServer.Close()
@@ -284,11 +284,11 @@ func TestDashboardLoads(t *testing.T) {
 	_, err = page.Goto(testAdminServer.URL)
 	require.NoError(t, err, "failed to navigate to dashboard")
 
-	// Wait for page to load
+	// Wait for page to load (use domcontentloaded since SSE keeps network busy)
 	err = page.WaitForLoadState(playwright.PageWaitForLoadStateOptions{
-		State: playwright.LoadStateNetworkidle,
+		State: playwright.LoadStateDomcontentloaded,
 	})
-	require.NoError(t, err, "failed to wait for network idle")
+	require.NoError(t, err, "failed to wait for DOM content loaded")
 
 	// Verify page title
 	title, err := page.Title()
@@ -327,11 +327,11 @@ func TestStatusSection(t *testing.T) {
 	_, err = page.Goto(testAdminServer.URL)
 	require.NoError(t, err, "failed to navigate to dashboard")
 
-	// Wait for page to load
+	// Wait for page to load (use domcontentloaded since SSE keeps network busy)
 	err = page.WaitForLoadState(playwright.PageWaitForLoadStateOptions{
-		State: playwright.LoadStateNetworkidle,
+		State: playwright.LoadStateDomcontentloaded,
 	})
-	require.NoError(t, err, "failed to wait for network idle")
+	require.NoError(t, err, "failed to wait for DOM content loaded")
 
 	// Verify active service indicator is present
 	activeServiceVisible, err := page.Locator("#active-service").IsVisible()
@@ -343,38 +343,38 @@ func TestStatusSection(t *testing.T) {
 	require.NoError(t, err, "failed to get active service text")
 	assert.Equal(t, "blue", activeServiceText, "active service should be blue by default")
 
-	// Verify Blue service card is present
-	blueCardVisible, err := page.Locator("div:has(h3:text('Blue'))").IsVisible()
+	// Verify Blue service card is present (use border-blue-500 class for specificity)
+	blueCardVisible, err := page.Locator("div.border-blue-500").IsVisible()
 	require.NoError(t, err, "failed to check blue card visibility")
 	assert.True(t, blueCardVisible, "blue service card should be visible")
 
 	// Verify Blue service has health status displayed
-	blueHealthStatusVisible, err := page.Locator("div:has(h3:text('Blue')) span").Filter(playwright.LocatorFilterOptions{
+	blueHealthStatusVisible, err := page.Locator("div.border-blue-500 span").Filter(playwright.LocatorFilterOptions{
 		HasText: regexp.MustCompile(`(Healthy|Unhealthy)`),
 	}).IsVisible()
 	require.NoError(t, err, "failed to check blue health status visibility")
 	assert.True(t, blueHealthStatusVisible, "blue service health status should be visible")
 
-	// Verify Green service card is present
-	greenCardVisible, err := page.Locator("div:has(h3:text('Green'))").IsVisible()
+	// Verify Green service card is present (use border-green-500 class for specificity)
+	greenCardVisible, err := page.Locator("div.border-green-500").IsVisible()
 	require.NoError(t, err, "failed to check green card visibility")
 	assert.True(t, greenCardVisible, "green service card should be visible")
 
 	// Verify Green service has health status displayed
-	greenHealthStatusVisible, err := page.Locator("div:has(h3:text('Green')) span").Filter(playwright.LocatorFilterOptions{
+	greenHealthStatusVisible, err := page.Locator("div.border-green-500 span").Filter(playwright.LocatorFilterOptions{
 		HasText: regexp.MustCompile(`(Healthy|Unhealthy)`),
 	}).IsVisible()
 	require.NoError(t, err, "failed to check green health status visibility")
 	assert.True(t, greenHealthStatusVisible, "green service health status should be visible")
 
 	// Verify both services show latency
-	blueLatencyVisible, err := page.Locator("div:has(h3:text('Blue')) p").Filter(playwright.LocatorFilterOptions{
+	blueLatencyVisible, err := page.Locator("div.border-blue-500 p").Filter(playwright.LocatorFilterOptions{
 		HasText: regexp.MustCompile(`Latency:`),
 	}).IsVisible()
 	require.NoError(t, err, "failed to check blue latency visibility")
 	assert.True(t, blueLatencyVisible, "blue service latency should be visible")
 
-	greenLatencyVisible, err := page.Locator("div:has(h3:text('Green')) p").Filter(playwright.LocatorFilterOptions{
+	greenLatencyVisible, err := page.Locator("div.border-green-500 p").Filter(playwright.LocatorFilterOptions{
 		HasText: regexp.MustCompile(`Latency:`),
 	}).IsVisible()
 	require.NoError(t, err, "failed to check green latency visibility")
@@ -391,11 +391,11 @@ func TestMetricsSection(t *testing.T) {
 	_, err = page.Goto(testAdminServer.URL)
 	require.NoError(t, err, "failed to navigate to dashboard")
 
-	// Wait for page to load
+	// Wait for page to load (use domcontentloaded since SSE keeps network busy)
 	err = page.WaitForLoadState(playwright.PageWaitForLoadStateOptions{
-		State: playwright.LoadStateNetworkidle,
+		State: playwright.LoadStateDomcontentloaded,
 	})
-	require.NoError(t, err, "failed to wait for network idle")
+	require.NoError(t, err, "failed to wait for DOM content loaded")
 
 	// Verify Total Requests metric card
 	totalRequestsVisible, err := page.Locator("#total-requests").IsVisible()
@@ -465,11 +465,11 @@ func TestSwitchControls(t *testing.T) {
 	_, err = page.Goto(testAdminServer.URL)
 	require.NoError(t, err, "failed to navigate to dashboard")
 
-	// Wait for page to load
+	// Wait for page to load (use domcontentloaded since SSE keeps network busy)
 	err = page.WaitForLoadState(playwright.PageWaitForLoadStateOptions{
-		State: playwright.LoadStateNetworkidle,
+		State: playwright.LoadStateDomcontentloaded,
 	})
-	require.NoError(t, err, "failed to wait for network idle")
+	require.NoError(t, err, "failed to wait for DOM content loaded")
 
 	// Check for Switch Controls section - it may or may not be rendered depending on the dashboard state
 	// The SwitchControls template exists but may not be included in the main page by default
@@ -515,11 +515,11 @@ func TestSSEConnection(t *testing.T) {
 	_, err = page.Goto(testAdminServer.URL)
 	require.NoError(t, err, "failed to navigate to dashboard")
 
-	// Wait for page to load
+	// Wait for page to load (use domcontentloaded since SSE keeps network busy)
 	err = page.WaitForLoadState(playwright.PageWaitForLoadStateOptions{
-		State: playwright.LoadStateNetworkidle,
+		State: playwright.LoadStateDomcontentloaded,
 	})
-	require.NoError(t, err, "failed to wait for network idle")
+	require.NoError(t, err, "failed to wait for DOM content loaded")
 
 	// Verify the main element has SSE connection attributes
 	mainElementVisible, err := page.Locator("main[hx-ext='sse']").IsVisible()
@@ -564,10 +564,10 @@ func TestSSEConnection(t *testing.T) {
 	assert.Contains(t, sseContent, "event: connected", "SSE should send connected event on connection")
 	assert.Contains(t, sseContent, `"connected": true`, "SSE connected event should contain connected: true")
 
-	// Verify HTMX SSE extension is loaded
-	htmxSSEScriptVisible, err := page.Locator("script[src*='htmx.org/dist/ext/sse.js']").IsVisible()
+	// Verify HTMX SSE extension is loaded (script from unpkg.com)
+	htmxSSEScriptCount, err := page.Locator("script[src*='sse.js']").Count()
 	require.NoError(t, err, "failed to check HTMX SSE script")
-	assert.True(t, htmxSSEScriptVisible, "HTMX SSE extension script should be loaded")
+	assert.GreaterOrEqual(t, htmxSSEScriptCount, 1, "HTMX SSE extension script should be loaded")
 
 	// Verify the page has JavaScript handlers for SSE updates
 	// Check that the updateStatus and updateMetrics functions exist
@@ -590,11 +590,11 @@ func TestHistorySection(t *testing.T) {
 	_, err = page.Goto(testAdminServer.URL)
 	require.NoError(t, err, "failed to navigate to dashboard")
 
-	// Wait for page to load
+	// Wait for page to load (use domcontentloaded since SSE keeps network busy)
 	err = page.WaitForLoadState(playwright.PageWaitForLoadStateOptions{
-		State: playwright.LoadStateNetworkidle,
+		State: playwright.LoadStateDomcontentloaded,
 	})
-	require.NoError(t, err, "failed to wait for network idle")
+	require.NoError(t, err, "failed to wait for DOM content loaded")
 
 	// Verify history section header
 	historyHeader, err := page.Locator("section:has(h2:text('Switch History')) h2").TextContent()
@@ -655,9 +655,9 @@ func TestDashboardResponsiveness(t *testing.T) {
 			require.NoError(t, err, "failed to navigate to dashboard for %s", vp.name)
 
 			err = page.WaitForLoadState(playwright.PageWaitForLoadStateOptions{
-				State: playwright.LoadStateNetworkidle,
+				State: playwright.LoadStateDomcontentloaded,
 			})
-			require.NoError(t, err, "failed to wait for network idle for %s", vp.name)
+			require.NoError(t, err, "failed to wait for DOM content loaded for %s", vp.name)
 
 			// Verify critical elements are still visible at all viewport sizes
 			headerVisible, err := page.Locator("h1").IsVisible()
@@ -686,9 +686,9 @@ func TestDashboardAccessibility(t *testing.T) {
 	require.NoError(t, err, "failed to navigate to dashboard")
 
 	err = page.WaitForLoadState(playwright.PageWaitForLoadStateOptions{
-		State: playwright.LoadStateNetworkidle,
+		State: playwright.LoadStateDomcontentloaded,
 	})
-	require.NoError(t, err, "failed to wait for network idle")
+	require.NoError(t, err, "failed to wait for DOM content loaded")
 
 	// Verify the page has a lang attribute
 	htmlLang, err := page.Locator("html").GetAttribute("lang")

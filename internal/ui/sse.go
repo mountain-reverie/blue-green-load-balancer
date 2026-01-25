@@ -109,9 +109,13 @@ func (b *SSEBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Register client
 	b.register <- client
 
-	// Ensure cleanup
+	// Ensure cleanup (non-blocking in case broker is stopped)
 	defer func() {
-		b.unregister <- client
+		select {
+		case b.unregister <- client:
+		default:
+			// Broker already stopped, channel is no longer being received
+		}
 	}()
 
 	// Send initial connection message
