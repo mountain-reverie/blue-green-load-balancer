@@ -59,6 +59,7 @@ type AdminConfig struct {
 	AuthKey    string `yaml:"auth_key"`
 	ControlURL string `yaml:"control_url"` // Custom control server (e.g., Headscale)
 	Ephemeral  bool   `yaml:"ephemeral"`   // Node is removed when it goes offline
+	WebhookKey string `yaml:"webhook_key"` // Secret for webhook signature verification
 }
 
 // HealthConfig defines the health check settings.

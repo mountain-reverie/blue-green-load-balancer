@@ -27,6 +27,7 @@ admin:
   hostname: "bluegreen-admin"
   state_dir: "/var/lib/bluegreen/tailscale"
   # auth_key: "${TS_AUTH_KEY}"  # Optional: Tailscale auth key
+  # webhook_key: "${WEBHOOK_KEY}"  # Optional: Secret for webhook signature verification
 
 health:
   interval: "10s"

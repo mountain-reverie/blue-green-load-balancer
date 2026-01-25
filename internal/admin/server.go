@@ -72,7 +72,7 @@ func (s *Server) setupRouter() {
 
 	// Register API operations
 	RegisterAPI(s.api, s)
-	RegisterWebhookAPI(s.api, s, "") // No webhook secret for now
+	RegisterWebhookAPI(s.api, s, s.cfg.Admin.WebhookKey)
 }
 
 // Start starts the admin server on the Tailscale network.
