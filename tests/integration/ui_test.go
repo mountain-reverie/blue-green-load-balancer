@@ -243,34 +243,48 @@ func waitForHealthChecks(h *health.Checker, timeout time.Duration) {
 	}
 }
 
-// screenshotPath returns the path for a test's screenshot in testdata/failed/.
-func screenshotPath(testName string) string {
+// baselineScreenshotPath returns the path for a test's baseline screenshot in testdata/.
+func baselineScreenshotPath(testName string) string {
+	// Sanitize test name for use as filename (replace / with _)
+	safeName := strings.ReplaceAll(testName, "/", "_")
+	return filepath.Join(testdataDir(), fmt.Sprintf("%s.png", safeName))
+}
+
+// failedScreenshotPath returns the path for a test's failed screenshot in testdata/failed/.
+func failedScreenshotPath(testName string) string {
 	// Sanitize test name for use as filename (replace / with _)
 	safeName := strings.ReplaceAll(testName, "/", "_")
 	return filepath.Join(failedScreenshotDir(), fmt.Sprintf("%s.png", safeName))
 }
 
 // manageScreenshot takes a screenshot during the test run.
-// If the test passes, the screenshot is removed.
-// If the test fails, the screenshot is kept for debugging.
+// Always saves a baseline screenshot to testdata/ (for documentation/comparison).
+// If the test fails, also saves to testdata/failed/ for debugging.
 func manageScreenshot(t *testing.T, page playwright.Page) {
-	path := screenshotPath(t.Name())
+	baselinePath := baselineScreenshotPath(t.Name())
+	failedPath := failedScreenshotPath(t.Name())
 
-	// Always take a screenshot
+	// Always take a baseline screenshot
 	_, err := page.Screenshot(playwright.PageScreenshotOptions{
-		Path:     playwright.String(path),
+		Path:     playwright.String(baselinePath),
 		FullPage: playwright.Bool(true),
 	})
 	if err != nil {
-		t.Logf("failed to take screenshot: %v", err)
+		t.Logf("failed to take baseline screenshot: %v", err)
 		return
 	}
 
-	// If test passed, remove the screenshot
-	if !t.Failed() {
-		os.Remove(path)
-	} else {
-		t.Logf("screenshot saved to: %s", path)
+	// If test failed, also save to failed directory for easy comparison
+	if t.Failed() {
+		_, err := page.Screenshot(playwright.PageScreenshotOptions{
+			Path:     playwright.String(failedPath),
+			FullPage: playwright.Bool(true),
+		})
+		if err != nil {
+			t.Logf("failed to take failure screenshot: %v", err)
+		} else {
+			t.Logf("failure screenshot saved to: %s", failedPath)
+		}
 	}
 }
 
