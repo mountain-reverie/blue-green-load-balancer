@@ -67,13 +67,13 @@ func New(ctx context.Context, cfg *Config) (*Client, error) {
 
 	lc, err := srv.LocalClient()
 	if err != nil {
-		srv.Close()
+		_ = srv.Close()
 		return nil, fmt.Errorf("getting local client: %w", err)
 	}
 
 	logger.Debug("waiting for Tailscale IP assignment")
 	if err := waitForTailscaleIP(ctx, lc); err != nil {
-		srv.Close()
+		_ = srv.Close()
 		return nil, fmt.Errorf("waiting for Tailscale IP: %w", err)
 	}
 
@@ -133,7 +133,7 @@ func (c *Client) GetStatus(ctx context.Context) (*StatusResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, c.parseError(resp)
@@ -156,7 +156,7 @@ func (c *Client) GetMetrics(ctx context.Context) (*MetricsResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, c.parseError(resp)
@@ -179,7 +179,7 @@ func (c *Client) TriggerRefresh(ctx context.Context) (*RefreshResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, c.parseError(resp)

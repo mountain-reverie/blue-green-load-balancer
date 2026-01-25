@@ -55,7 +55,9 @@ func (h *Handlers) Dashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	component := templates.DashboardPage(data)
-	component.Render(r.Context(), w)
+	if err := component.Render(r.Context(), w); err != nil {
+		http.Error(w, "failed to render dashboard", http.StatusInternalServerError)
+	}
 }
 
 // SSEHandler handles Server-Sent Events connections.

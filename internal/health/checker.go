@@ -135,7 +135,7 @@ func (c *Checker) check(ctx context.Context, target config.ServiceTarget) {
 		})
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	healthy := resp.StatusCode >= 200 && resp.StatusCode < 300
 	status := Status{

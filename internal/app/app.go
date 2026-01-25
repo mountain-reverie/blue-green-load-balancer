@@ -166,7 +166,7 @@ func (a *Application) Stop() {
 
 	if a.proxyServer != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		a.proxyServer.Shutdown(ctx)
+		_ = a.proxyServer.Shutdown(ctx)
 		cancel()
 		a.proxyServer = nil
 	}
@@ -183,7 +183,7 @@ func (a *Application) Stop() {
 		a.Health.Stop()
 	}
 	if a.Admin != nil {
-		a.Admin.Stop()
+		_ = a.Admin.Stop()
 	}
 
 	a.started = false

@@ -119,7 +119,7 @@ func (b *SSEBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Send initial connection message
-	fmt.Fprintf(w, "event: connected\ndata: {\"connected\": true}\n\n")
+	_, _ = fmt.Fprintf(w, "event: connected\ndata: {\"connected\": true}\n\n")
 	flusher.Flush()
 
 	// Keep-alive ticker
@@ -135,12 +135,12 @@ func (b *SSEBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
-			w.Write(msg)
+			_, _ = w.Write(msg)
 			flusher.Flush()
 
 		case <-ticker.C:
 			// Send keep-alive
-			fmt.Fprintf(w, ": keep-alive\n\n")
+			_, _ = fmt.Fprintf(w, ": keep-alive\n\n")
 			flusher.Flush()
 		}
 	}

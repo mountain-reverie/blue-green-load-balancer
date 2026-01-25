@@ -132,7 +132,7 @@ func runStatus(ctx context.Context, cmd *cli.Command) error {
 		os.Exit(exitConnectionError)
 		return nil
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	status, err := client.GetStatus(ctx)
 	if err != nil {
@@ -157,7 +157,7 @@ func runMetrics(ctx context.Context, cmd *cli.Command) error {
 		os.Exit(exitConnectionError)
 		return nil
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	metrics, err := client.GetMetrics(ctx)
 	if err != nil {
@@ -182,7 +182,7 @@ func runRefresh(ctx context.Context, cmd *cli.Command) error {
 		os.Exit(exitConnectionError)
 		return nil
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	refresh, err := client.TriggerRefresh(ctx)
 	if err != nil {

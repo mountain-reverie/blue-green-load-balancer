@@ -106,7 +106,7 @@ func (s *Server) Start(ctx context.Context) error {
 	// Get listener on port 80
 	ln, err := s.tsServer.Listen("tcp", ":80")
 	if err != nil {
-		s.tsServer.Close()
+		_ = s.tsServer.Close()
 		return fmt.Errorf("listening on tsnet: %w", err)
 	}
 	s.listener = ln
@@ -134,10 +134,10 @@ func (s *Server) Stop() error {
 	defer s.mu.Unlock()
 
 	if s.listener != nil {
-		s.listener.Close()
+		_ = s.listener.Close()
 	}
 	if s.tsServer != nil {
-		s.tsServer.Close()
+		_ = s.tsServer.Close()
 	}
 	return nil
 }
