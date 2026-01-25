@@ -34,6 +34,7 @@ templ DashboardPage(data DashboardData) {
 				</header>
 				<main hx-ext="sse" sse-connect="/events" sse-swap="status">
 					@StatusSection(data.Status)
+					@SwitchControls()
 					@MetricsSection(data.Metrics)
 					@HistorySection(data.History)
 				</main>

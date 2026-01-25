@@ -41,6 +41,10 @@ type WebhookRefreshOutput struct {
 
 // RegisterWebhookAPI registers webhook API operations.
 func RegisterWebhookAPI(api huma.API, s *Server, webhookSecret string) {
+	if webhookSecret == "" {
+		s.logger.Warn("webhook authentication disabled - no secret configured")
+	}
+
 	// POST /api/webhook/refresh - triggers a git refresh which may cause a switch
 	huma.Post(api, "/api/webhook/refresh", func(ctx context.Context, input *WebhookRefreshInput) (*WebhookRefreshOutput, error) {
 		// Verify webhook signature if secret is configured
@@ -52,6 +56,8 @@ func RegisterWebhookAPI(api huma.API, s *Server, webhookSecret string) {
 
 		result := s.switcher.RefreshGit(ctx)
 
+		// Return 500 only on complete failure. Partial success (Refreshed=true with Error)
+		// returns 200 with error details in the response body.
 		if result.Error != "" && !result.Refreshed {
 			return nil, huma.Error500InternalServerError(result.Error)
 		}
