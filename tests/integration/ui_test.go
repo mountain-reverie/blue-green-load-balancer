@@ -18,18 +18,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	playwrightcigo "github.com/mountain-reverie/playwright-ci-go"
 	"github.com/playwright-community/playwright-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mountain-reverie/blue-green-load-balancer/internal/app"
 	"github.com/mountain-reverie/blue-green-load-balancer/internal/config"
 	"github.com/mountain-reverie/blue-green-load-balancer/internal/health"
-	"github.com/mountain-reverie/blue-green-load-balancer/internal/metrics"
-	"github.com/mountain-reverie/blue-green-load-balancer/internal/proxy"
-	"github.com/mountain-reverie/blue-green-load-balancer/internal/switcher"
-	"github.com/mountain-reverie/blue-green-load-balancer/internal/ui"
 )
 
 var (
@@ -117,24 +113,20 @@ func createMockBackend(name string) *httptest.Server {
 	return httptest.NewServer(mux)
 }
 
-// testAdminServerWrapper wraps httptest.Server with cleanup logic.
+// testAdminServerWrapper wraps httptest.Server with the Application for cleanup.
 type testAdminServerWrapper struct {
 	*httptest.Server
-	cancel     context.CancelFunc
-	health     *health.Checker
-	uiHandlers *ui.Handlers
-	switcher   *switcher.Switcher
+	app *app.Application
 }
 
 // Close closes the server and performs cleanup.
 func (w *testAdminServerWrapper) Close() {
-	w.cancel()
-	w.health.Stop()
-	w.uiHandlers.StopUpdates()
+	w.app.Stop()
 	w.Server.Close()
 }
 
-// createTestAdminServer creates a test admin server with UI handlers.
+// createTestAdminServer creates a test admin server using the Application type.
+// This ensures tests run against the actual production code paths.
 func createTestAdminServer(blueURL, greenURL string) (*testAdminServerWrapper, error) {
 	cfg := &config.Config{
 		Services: config.ServiceConfig{
@@ -163,83 +155,33 @@ func createTestAdminServer(blueURL, greenURL string) (*testAdminServerWrapper, e
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	// Create proxy
-	p, err := proxy.New(cfg, logger)
+	// Create application using the shared app package
+	application, err := app.New(cfg, app.WithLogger(logger))
 	if err != nil {
-		return nil, fmt.Errorf("creating proxy: %w", err)
+		return nil, fmt.Errorf("creating application: %w", err)
 	}
 
-	// Create health checker
-	h := health.NewChecker(cfg, logger)
-	ctx, cancel := context.WithCancel(context.Background())
-	h.Start(ctx)
+	// Start the application (health checker, SSE updates, etc.)
+	ctx := context.Background()
+	if err := application.Start(ctx); err != nil {
+		return nil, fmt.Errorf("starting application: %w", err)
+	}
 
 	// Wait for initial health checks with polling
-	waitForHealthChecks(h, 2*time.Second)
+	waitForHealthChecks(application.Health, 2*time.Second)
 
-	// Create metrics collector
-	m := metrics.NewCollector(cfg)
+	// Simulate some metrics data for tests
+	application.Metrics.RecordRequest(config.ServiceBlue, 200, 10*time.Millisecond)
+	application.Metrics.RecordRequest(config.ServiceBlue, 200, 15*time.Millisecond)
+	application.Metrics.RecordRequest(config.ServiceGreen, 200, 12*time.Millisecond)
 
-	// Simulate some metrics data
-	m.RecordRequest(config.ServiceBlue, 200, 10*time.Millisecond)
-	m.RecordRequest(config.ServiceBlue, 200, 15*time.Millisecond)
-	m.RecordRequest(config.ServiceGreen, 200, 12*time.Millisecond)
-
-	// Create switcher
-	sw := switcher.NewSwitcher(cfg, logger, p, h)
-
-	// Create UI handlers
-	uiHandlers := ui.NewHandlers(sw, m)
-	uiHandlers.StartUpdates()
-
-	// Create router
-	router := chi.NewRouter()
-	uiHandlers.RegisterRoutes(router)
-
-	// Add switch API endpoint for testing
-	router.Post("/api/switch", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Target string `json:"target"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-
-		var target config.ServiceTarget
-		switch req.Target {
-		case "blue":
-			target = config.ServiceBlue
-		case "green":
-			target = config.ServiceGreen
-		default:
-			http.Error(w, "invalid target", http.StatusBadRequest)
-			return
-		}
-
-		if err := sw.Switch(r.Context(), target, switcher.TriggerManual); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok", "active": req.Target})
-	})
-
-	// Serve static files from project root
-	staticDir := findStaticDir()
-	if staticDir != "" {
-		router.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir))))
-	}
-
-	server := httptest.NewServer(router)
+	// Create test server using the application's handler
+	// This includes all routes: UI, Huma API (/api/switch, /api/status, etc.), and metrics
+	server := httptest.NewServer(application.Handler())
 
 	return &testAdminServerWrapper{
-		Server:     server,
-		cancel:     cancel,
-		health:     h,
-		uiHandlers: uiHandlers,
-		switcher:   sw,
+		Server: server,
+		app:    application,
 	}, nil
 }
 
