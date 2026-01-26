@@ -15,6 +15,7 @@ INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/bluegreen"
 STATE_DIR="/var/lib/bluegreen"
 SERVICE_FILE="/etc/systemd/system/bluegreen.service"
+SOCKET_FILE="/etc/systemd/system/bluegreen.socket"
 
 # Colors for output
 RED='\033[0;31m'
@@ -47,10 +48,15 @@ fi
 
 log_info "Uninstalling Blue/Green Load Balancer..."
 
-# 1. Stop and disable service
+# 1. Stop and disable service and socket
 if systemctl is-active --quiet bluegreen 2>/dev/null; then
     systemctl stop bluegreen
     log_info "Stopped bluegreen service"
+fi
+
+if systemctl is-active --quiet bluegreen.socket 2>/dev/null; then
+    systemctl stop bluegreen.socket
+    log_info "Stopped bluegreen socket"
 fi
 
 if systemctl is-enabled --quiet bluegreen 2>/dev/null; then
@@ -58,12 +64,23 @@ if systemctl is-enabled --quiet bluegreen 2>/dev/null; then
     log_info "Disabled bluegreen service"
 fi
 
-# 2. Remove service file
+if systemctl is-enabled --quiet bluegreen.socket 2>/dev/null; then
+    systemctl disable bluegreen.socket
+    log_info "Disabled bluegreen socket"
+fi
+
+# 2. Remove service and socket files
 if [[ -f "$SERVICE_FILE" ]]; then
     rm -f "$SERVICE_FILE"
-    systemctl daemon-reload
     log_info "Removed systemd service file"
 fi
+
+if [[ -f "$SOCKET_FILE" ]]; then
+    rm -f "$SOCKET_FILE"
+    log_info "Removed systemd socket file"
+fi
+
+systemctl daemon-reload
 
 # 3. Remove binary
 if [[ -f "$INSTALL_DIR/bluegreen" ]]; then

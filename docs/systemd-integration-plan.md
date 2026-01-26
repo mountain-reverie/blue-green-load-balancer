@@ -14,6 +14,7 @@ This document describes the systemd integration for the blue/green load balancer
 | Feature | Status |
 |---------|--------|
 | Systemd service file | ✅ Implemented |
+| Socket activation | ✅ Implemented |
 | Native journald logging | ✅ Implemented |
 | sd_notify READY/RELOADING | ✅ Implemented |
 | SIGHUP config reload | ✅ Implemented |
@@ -56,7 +57,8 @@ This document describes the systemd integration for the blue/green load balancer
 |------|------|---------|
 | Binary | `/usr/local/bin/bluegreen` | Application executable |
 | Config | `/etc/bluegreen/config.yaml` | Main configuration |
-| Service | `/etc/systemd/system/bluegreen.service` | Systemd unit file |
+| Service | `/etc/systemd/system/bluegreen.service` | Systemd service unit |
+| Socket | `/etc/systemd/system/bluegreen.socket` | Socket activation unit |
 | State | `/var/lib/bluegreen/` | Tailscale state, runtime data |
 | Environment | `/etc/bluegreen/bluegreen.env` | Secrets (auth keys) |
 
@@ -249,7 +251,47 @@ chmod 600 /etc/bluegreen/bluegreen.env
 chown root:bluegreen /etc/bluegreen/bluegreen.env
 ```
 
-### Phase 4: Cloudflare Tunnel Integration
+### Phase 4: Socket Activation (Implemented)
+
+Socket activation allows systemd to hold the listening socket before the service starts.
+This enables Cloudflare tunnel to connect immediately, even during service restarts.
+
+#### Socket Unit: `deploy/bluegreen.socket`
+
+```ini
+[Unit]
+Description=Blue/Green Load Balancer Socket
+Before=cloudflared.service
+
+[Socket]
+ListenStream=8080
+Accept=no
+ReusePort=true
+NoDelay=true
+Backlog=4096
+
+[Install]
+WantedBy=sockets.target
+```
+
+#### Benefits
+
+1. **Zero-downtime restarts**: systemd holds connections during service restart
+2. **Faster tunnel connectivity**: Socket ready before cloudflared starts
+3. **On-demand activation**: Service starts when first connection arrives
+4. **Connection queuing**: Connections wait in backlog during brief restarts
+
+#### Startup Order
+
+```
+bluegreen.socket (starts first, holds port 8080)
+       │
+       ├──► cloudflared.service (connects to localhost:8080)
+       │
+       └──► bluegreen.service (started on first connection or after cloudflared)
+```
+
+### Phase 5: Cloudflare Tunnel Integration
 
 #### Option A: Using `After=` + `BindsTo=` (Recommended)
 
@@ -473,16 +515,31 @@ Settings that require full restart:
                     network-online.target
                             │
                             ▼
-                   cloudflared.service
-                            │
-              ┌─────────────┴─────────────┐
-              │  After + BindsTo          │
-              ▼                           │
-        bluegreen.service ◄───────────────┘
+                   bluegreen.socket ─────────────┐
+                     (holds port 8080)           │
+                            │                    │
+              ┌─────────────┴─────────────┐      │
+              │  Before                   │      │
+              ▼                           │      │
+                   cloudflared.service    │      │
+                     (connects to 8080)   │      │
+                            │             │      │
+              ┌─────────────┴─────────────┤      │
+              │  After + BindsTo          │      │
+              ▼                           │      │
+        bluegreen.service ◄───────────────┴──────┘
+          (Requires socket, receives FD)
               │
               ▼
         multi-user.target
 ```
+
+With socket activation:
+1. `bluegreen.socket` starts first, listens on port 8080
+2. `cloudflared.service` starts, connects to port 8080
+3. First connection triggers `bluegreen.service` to start
+4. systemd passes the socket file descriptor to bluegreen
+5. bluegreen serves requests without re-binding the port
 
 ## Security Considerations
 
@@ -493,14 +550,16 @@ Settings that require full restart:
 5. **Secret management**: Auth keys in separate env file with restricted permissions
 6. **Network restrictions**: Only AF_INET, AF_INET6, AF_UNIX, AF_NETLINK allowed
 
-## Files to Create
+## Files Created
 
-| Priority | File | Description |
-|----------|------|-------------|
-| 1 | `deploy/bluegreen.service` | Systemd service unit |
-| 2 | `deploy/install.sh` | Installation script |
-| 3 | `config/config.example.yaml` | Update with systemd paths |
-| 4 | `docs/deployment.md` | Deployment documentation |
+| File | Description |
+|------|-------------|
+| `deploy/bluegreen.service` | Systemd service unit (Type=notify-reload) |
+| `deploy/bluegreen.socket` | Socket activation unit (port 8080) |
+| `deploy/install.sh` | Installation script |
+| `deploy/uninstall.sh` | Uninstallation script |
+| `internal/logging/journald.go` | Native journald slog handler |
+| `internal/logging/systemd.go` | sd_notify and socket activation helpers |
 
 ## References
 

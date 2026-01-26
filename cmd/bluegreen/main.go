@@ -92,8 +92,24 @@ func main() {
 		}
 	}
 
-	// Start proxy server
-	proxyErrCh := application.StartProxyServer()
+	// Start proxy server (with socket activation if available)
+	var proxyErrCh <-chan error
+	if logging.IsSocketActivated() {
+		listeners, err := logging.GetSocketActivationListeners()
+		if err != nil {
+			logger.Error("failed to get socket activation listeners", "error", err)
+			os.Exit(1)
+		}
+		if len(listeners) == 0 {
+			logger.Error("socket activation enabled but no listeners received")
+			os.Exit(1)
+		}
+		// Use the first listener for the proxy (typically bluegreen.socket)
+		logger.Info("using socket activation", "listeners", len(listeners))
+		proxyErrCh = application.StartProxyServerWithListener(listeners[0])
+	} else {
+		proxyErrCh = application.StartProxyServer()
+	}
 
 	// Notify systemd that we're ready
 	if err := logging.NotifyReady(); err != nil {

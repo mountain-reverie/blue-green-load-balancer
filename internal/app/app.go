@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -271,6 +272,14 @@ func (a *Application) StartAdminServer(ctx context.Context, addr string) error {
 // StartProxyServer starts the proxy server on the configured address.
 // Returns a channel that receives any error from ListenAndServe (or nil on clean shutdown).
 func (a *Application) StartProxyServer() <-chan error {
+	return a.StartProxyServerWithListener(nil)
+}
+
+// StartProxyServerWithListener starts the proxy server using the provided listener.
+// If listener is nil, it creates its own listener on the configured address.
+// This supports systemd socket activation by accepting pre-created listeners.
+// Returns a channel that receives any error from Serve (or nil on clean shutdown).
+func (a *Application) StartProxyServerWithListener(ln net.Listener) <-chan error {
 	errCh := make(chan error, 1)
 
 	a.mu.Lock()
@@ -284,8 +293,18 @@ func (a *Application) StartProxyServer() <-chan error {
 	a.mu.Unlock()
 
 	go func() {
-		a.Logger.Info("proxy server starting", "addr", a.Config.Proxy.ListenAddr)
-		if err := a.proxyServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		var err error
+		if ln != nil {
+			// Use provided listener (socket activation)
+			a.Logger.Info("proxy server starting with socket activation", "addr", ln.Addr().String())
+			err = a.proxyServer.Serve(ln)
+		} else {
+			// Create our own listener
+			a.Logger.Info("proxy server starting", "addr", a.Config.Proxy.ListenAddr)
+			err = a.proxyServer.ListenAndServe()
+		}
+
+		if err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		} else {
 			errCh <- nil

@@ -6,6 +6,11 @@ Documentation=https://github.com/mountain-reverie/blue-green-load-balancer
 After=network-online.target
 Wants=network-online.target
 
+# Socket activation: require the socket unit
+# The socket starts before cloudflared so the tunnel can connect immediately
+Requires=bluegreen.socket
+After=bluegreen.socket
+
 # Start after Cloudflare tunnel is ready
 # BindsTo ensures we stop if cloudflared stops unexpectedly
 After=cloudflared.service
@@ -83,3 +88,5 @@ SystemCallFilter=~@privileged @resources
 
 [Install]
 WantedBy=multi-user.target
+# Also pull in the socket when the service is enabled
+Also=bluegreen.socket

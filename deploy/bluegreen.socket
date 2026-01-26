@@ -1,0 +1,23 @@
+[Unit]
+Description=Blue/Green Load Balancer Socket
+Documentation=https://github.com/mountain-reverie/blue-green-load-balancer
+
+# Start socket before cloudflared so the tunnel can connect immediately
+Before=cloudflared.service
+
+[Socket]
+# Listen on the proxy port (Cloudflare tunnel connects here)
+ListenStream=8080
+
+# Accept connections (pass to service)
+Accept=no
+
+# Socket options for high-traffic scenarios
+ReusePort=true
+NoDelay=true
+
+# Backlog for pending connections
+Backlog=4096
+
+[Install]
+WantedBy=sockets.target

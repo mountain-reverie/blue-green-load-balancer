@@ -1,8 +1,10 @@
 package logging
 
 import (
+	"net"
 	"os"
 
+	"github.com/coreos/go-systemd/v22/activation"
 	"github.com/coreos/go-systemd/v22/daemon"
 )
 
@@ -53,4 +55,24 @@ func IsUnderSystemd() bool {
 		return true
 	}
 	return false
+}
+
+// IsSocketActivated returns true if the process was socket-activated by systemd.
+// This checks for the presence of LISTEN_FDS environment variable.
+func IsSocketActivated() bool {
+	return os.Getenv("LISTEN_FDS") != ""
+}
+
+// GetSocketActivationListeners returns listeners passed by systemd socket activation.
+// Returns nil if not socket-activated or if there are no listeners.
+// The returned listeners are ready to use with http.Server.Serve().
+func GetSocketActivationListeners() ([]net.Listener, error) {
+	return activation.Listeners()
+}
+
+// GetSocketActivationListenersByName returns listeners by their socket unit name.
+// This is useful when multiple sockets are configured.
+// The name should match the socket unit filename without the .socket extension.
+func GetSocketActivationListenersByName() (map[string][]net.Listener, error) {
+	return activation.ListenersWithNames()
 }

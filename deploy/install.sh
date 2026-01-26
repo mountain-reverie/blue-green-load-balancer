@@ -174,14 +174,24 @@ chmod 750 "$CONFIG_DIR"
 chmod 750 "$STATE_DIR"
 log_info "Set directory permissions"
 
-# 7. Install systemd service
+# 7. Install systemd service and socket
 SERVICE_SRC="${SCRIPT_DIR}/bluegreen.service"
+SOCKET_SRC="${SCRIPT_DIR}/bluegreen.socket"
+SOCKET_FILE="/etc/systemd/system/bluegreen.socket"
+
 if [[ -f "$SERVICE_SRC" ]]; then
     install -m 644 "$SERVICE_SRC" "$SERVICE_FILE"
     log_info "Installed systemd service"
 else
     log_error "Service file not found: $SERVICE_SRC"
     exit 1
+fi
+
+if [[ -f "$SOCKET_SRC" ]]; then
+    install -m 644 "$SOCKET_SRC" "$SOCKET_FILE"
+    log_info "Installed systemd socket (socket activation enabled)"
+else
+    log_warn "Socket file not found: $SOCKET_SRC (socket activation disabled)"
 fi
 
 # 8. Reload systemd
@@ -195,11 +205,17 @@ echo "Next steps:"
 echo "  1. Edit $CONFIG_DIR/config.yaml with your settings"
 echo "  2. Add your Tailscale auth key to $CONFIG_DIR/bluegreen.env"
 echo "  3. Ensure cloudflared.service is installed and running"
-echo "  4. Enable and start the service:"
+echo "  4. Enable and start the service (socket enables automatically):"
 echo "     systemctl enable --now bluegreen"
 echo ""
+echo "Socket activation:"
+echo "  The socket (port 8080) starts before cloudflared, allowing"
+echo "  the tunnel to connect immediately. The service starts on"
+echo "  first connection or when cloudflared is ready."
+echo ""
 echo "Useful commands:"
-echo "  systemctl status bluegreen     # Check service status"
-echo "  journalctl -u bluegreen -f     # Follow logs"
-echo "  journalctl -u bluegreen -u cloudflared -f  # Combined logs"
+echo "  systemctl status bluegreen         # Check service status"
+echo "  systemctl status bluegreen.socket  # Check socket status"
+echo "  journalctl -u bluegreen -f         # Follow logs"
+echo "  systemctl reload bluegreen         # Reload configuration"
 echo ""
