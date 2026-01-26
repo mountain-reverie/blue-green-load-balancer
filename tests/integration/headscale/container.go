@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
@@ -127,7 +126,17 @@ func (h *Container) CreatePreauthKey(ctx context.Context, user string) (string, 
 	return resp.Key, nil
 }
 
+// headscaleNode represents a node in the Headscale nodes list JSON output.
+type headscaleNode struct {
+	ID          int      `json:"id"`
+	Name        string   `json:"name"`
+	GivenName   string   `json:"givenName"`
+	IPAddresses []string `json:"ipAddresses"`
+	Online      bool     `json:"online"`
+}
+
 // GetTailscaleIP retrieves the Tailscale IP for a given hostname.
+// It only returns IPs for online nodes and matches the hostname exactly.
 func (h *Container) GetTailscaleIP(ctx context.Context, hostname string) (string, error) {
 	exitCode, reader, err := h.Exec(ctx, []string{
 		"headscale", "nodes", "list", "-o", "json-line",
@@ -144,18 +153,48 @@ func (h *Container) GetTailscaleIP(ctx context.Context, hostname string) (string
 		return "", fmt.Errorf("reading exec output: %w", err)
 	}
 
-	// Parse the output to find the IP for the given hostname
-	// This is a simplified approach; in production you'd want proper JSON parsing
-	lines := strings.Split(buf.String(), "\n")
-	for _, line := range lines {
-		if strings.Contains(line, hostname) {
-			// Look for IP pattern in the line
-			ipPattern := regexp.MustCompile(`100\.64\.\d+\.\d+`)
-			if match := ipPattern.FindString(line); match != "" {
-				return match, nil
-			}
-		}
+	output := buf.String()
+	if strings.TrimSpace(output) == "" {
+		return "", fmt.Errorf("no nodes found for hostname %s", hostname)
 	}
 
-	return "", fmt.Errorf("no IP found for hostname %s", hostname)
+	for line := range strings.SplitSeq(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		// Docker exec output may contain multiplexed stream headers before JSON.
+		// Find the start of JSON content on this line.
+		jsonStart := strings.Index(line, "{")
+		if jsonStart == -1 {
+			continue
+		}
+		line = line[jsonStart:]
+
+		var node headscaleNode
+		if err := json.Unmarshal([]byte(line), &node); err != nil {
+			// Skip malformed lines
+			continue
+		}
+
+		// Match hostname exactly against both name and givenName fields
+		if node.Name != hostname && node.GivenName != hostname {
+			continue
+		}
+
+		// Only return IPs for online nodes
+		if !node.Online {
+			continue
+		}
+
+		// Return the first IP address (typically the IPv4 address)
+		if len(node.IPAddresses) == 0 {
+			return "", fmt.Errorf("node %s has no IP addresses", hostname)
+		}
+
+		return node.IPAddresses[0], nil
+	}
+
+	return "", fmt.Errorf("no online node found for hostname %s", hostname)
 }
