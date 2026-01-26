@@ -120,10 +120,11 @@ func TestProxyErrorHandling(t *testing.T) {
 
 func TestSwitcherWithHealthCheck(t *testing.T) {
 	// Create mock backend servers
-	blueHealthy := true
+	var blueHealthy atomic.Bool
+	blueHealthy.Store(true)
 	blueServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health" {
-			if blueHealthy {
+			if blueHealthy.Load() {
 				w.WriteHeader(http.StatusOK)
 			} else {
 				w.WriteHeader(http.StatusServiceUnavailable)
@@ -182,7 +183,7 @@ func TestSwitcherWithHealthCheck(t *testing.T) {
 
 	// Test switch to unhealthy blue (should fail)
 	t.Run("switch to unhealthy blue", func(t *testing.T) {
-		blueHealthy = false
+		blueHealthy.Store(false)
 		time.Sleep(200 * time.Millisecond) // Wait for health check
 
 		err := sw.Switch(ctx, config.ServiceBlue, switcher.TriggerGitTag)
@@ -192,7 +193,7 @@ func TestSwitcherWithHealthCheck(t *testing.T) {
 
 	// Make blue healthy again and switch
 	t.Run("switch to recovered blue", func(t *testing.T) {
-		blueHealthy = true
+		blueHealthy.Store(true)
 		time.Sleep(200 * time.Millisecond) // Wait for health check
 
 		err := sw.Switch(ctx, config.ServiceBlue, switcher.TriggerGitTag)
