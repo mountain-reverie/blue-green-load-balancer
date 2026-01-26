@@ -122,19 +122,14 @@ func (p *Proxy) createReverseProxy(target *url.URL, service config.ServiceTarget
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
-	// Check if draining
-	if p.drainer.IsDraining() {
+	// Atomically check draining and track connection.
+	// This prevents the race between checking IsDraining() and adding to WaitGroup.
+	release := p.drainer.Track()
+	if release == nil {
 		http.Error(w, "Service is draining", http.StatusServiceUnavailable)
 		return
 	}
-
-	// Track the connection
-	p.drainer.activeConnections.Add(1)
-	p.drainer.wg.Add(1)
-	defer func() {
-		p.drainer.activeConnections.Add(-1)
-		p.drainer.wg.Done()
-	}()
+	defer release()
 
 	// Get current target
 	target := p.ActiveTarget()
