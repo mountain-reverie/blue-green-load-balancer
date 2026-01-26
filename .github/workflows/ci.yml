@@ -89,7 +89,7 @@ jobs:
             TARGETARCH=${{ matrix.platform }}
 
       - name: Scan Image
-        uses: anchore/scan-action@v5
+        uses: anchore/scan-action@v7
         id: scan
         with:
           image: ghcr.io/${{ github.repository }}:${{ github.sha }}
