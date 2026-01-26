@@ -127,21 +127,33 @@ func (d *Drainer) Drain(ctx context.Context, timeout time.Duration) error {
 }
 
 // Reset resets the drainer state for a new drain cycle.
-// It waits for any previous drain goroutine to complete before resetting,
-// preventing WaitGroup reuse panics.
+// This method is non-blocking to prevent deadlocks when the previous drain's
+// wg.Wait() goroutine hasn't completed (e.g., due to stuck in-flight requests).
+// If the previous drain is still running, draining remains true to prevent
+// WaitGroup reuse panics - the next Drain() call will handle cleanup.
 func (d *Drainer) Reset() {
 	d.drainMu.Lock()
 	defer d.drainMu.Unlock()
 
-	// Wait for previous drain goroutine to complete before resetting.
-	// This prevents WaitGroup reuse while wg.Wait() is still running.
+	// Check if previous drain goroutine has completed (non-blocking)
+	prevDrainDone := true
 	if d.prevDone != nil {
-		<-d.prevDone
-		d.prevDone = nil
+		select {
+		case <-d.prevDone:
+			d.prevDone = nil
+		default:
+			// Previous drain still running - don't fully reset to prevent WaitGroup reuse
+			prevDrainDone = false
+		}
 	}
 
 	d.mu.Lock()
-	d.draining.Store(false)
+	// Only allow new requests if previous drain has completed.
+	// This prevents WaitGroup reuse while wg.Wait() is still running.
+	if prevDrainDone {
+		d.draining.Store(false)
+	}
+	// Always create new drainCh for the next drain cycle
 	d.drainCh = make(chan struct{})
 	d.mu.Unlock()
 }
