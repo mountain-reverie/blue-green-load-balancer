@@ -1,0 +1,85 @@
+[Unit]
+Description=Blue/Green Load Balancer
+Documentation=https://github.com/mountain-reverie/blue-green-load-balancer
+
+# Wait for network to be fully online
+After=network-online.target
+Wants=network-online.target
+
+# Start after Cloudflare tunnel is ready
+# BindsTo ensures we stop if cloudflared stops unexpectedly
+After=cloudflared.service
+BindsTo=cloudflared.service
+
+[Service]
+# notify-reload: service sends READY=1 when ready, supports SIGHUP reload
+Type=notify-reload
+
+# Run as dedicated non-root user
+User=bluegreen
+Group=bluegreen
+
+# Directory management - systemd creates these automatically
+StateDirectory=bluegreen
+StateDirectoryMode=0750
+ConfigurationDirectory=bluegreen
+ConfigurationDirectoryMode=0750
+
+# Working directory
+WorkingDirectory=/var/lib/bluegreen
+
+# Environment file for secrets
+EnvironmentFile=-/etc/bluegreen/bluegreen.env
+
+# Main process
+ExecStart=/usr/local/bin/bluegreen -config /etc/bluegreen/config.yaml
+
+# Reload configuration (sends SIGHUP)
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Graceful shutdown - send SIGTERM, wait 35s for drain (30s drain + 5s buffer)
+TimeoutStopSec=35
+KillMode=mixed
+KillSignal=SIGTERM
+
+# Restart policy
+Restart=on-failure
+RestartSec=5s
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+# Logging - stdout/stderr go to journald automatically
+# The application uses native journald protocol for structured logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bluegreen
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+MemoryDenyWriteExecute=yes
+
+# Allow network access
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+PrivateNetwork=no
+
+# Allow binding to privileged ports if needed (< 1024)
+# Uncomment if you need to listen on ports below 1024
+# AmbientCapabilities=CAP_NET_BIND_SERVICE
+# CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+# System call filtering
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+
+[Install]
+WantedBy=multi-user.target

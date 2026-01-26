@@ -37,6 +37,9 @@ type Application struct {
 	// prometheusReg is stored to apply after Metrics is initialized
 	prometheusReg prometheus.Registerer
 
+	// configPath stores the config file path for reload
+	configPath string
+
 	mu          sync.Mutex
 	gitWatcher  *switcher.GitWatcher
 	proxyServer *http.Server
@@ -60,6 +63,13 @@ func WithLogger(logger *slog.Logger) Option {
 func WithPrometheusRegistry(reg prometheus.Registerer) Option {
 	return func(a *Application) {
 		a.prometheusReg = reg
+	}
+}
+
+// WithConfigPath stores the config file path for reload support.
+func WithConfigPath(path string) Option {
+	return func(a *Application) {
+		a.configPath = path
 	}
 }
 
@@ -187,6 +197,59 @@ func (a *Application) Stop() {
 	}
 
 	a.started = false
+}
+
+// Reload reloads the configuration from disk and applies changes.
+// Not all configuration changes can be applied without restart:
+// - proxy.listen_addr: requires restart
+// - admin.*: requires restart (Tailscale settings)
+// Hot-reloadable settings:
+// - health.interval, health.timeout
+// - git.poll_interval
+// - services.*.health_path
+func (a *Application) Reload() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if a.configPath == "" {
+		return errors.New("config path not set, cannot reload")
+	}
+
+	newCfg, err := config.Load(a.configPath)
+	if err != nil {
+		return err
+	}
+
+	// Log changes that require restart
+	if newCfg.Proxy.ListenAddr != a.Config.Proxy.ListenAddr {
+		a.Logger.Warn("proxy.listen_addr changed, requires restart",
+			"old", a.Config.Proxy.ListenAddr,
+			"new", newCfg.Proxy.ListenAddr)
+	}
+	if newCfg.Admin.Hostname != a.Config.Admin.Hostname {
+		a.Logger.Warn("admin.hostname changed, requires restart",
+			"old", a.Config.Admin.Hostname,
+			"new", newCfg.Admin.Hostname)
+	}
+
+	// Apply hot-reloadable changes
+	a.Config.Health.Interval = newCfg.Health.Interval
+	a.Config.Health.Timeout = newCfg.Health.Timeout
+	a.Config.Git.PollInterval = newCfg.Git.PollInterval
+	a.Config.Services.Blue.HealthPath = newCfg.Services.Blue.HealthPath
+	a.Config.Services.Green.HealthPath = newCfg.Services.Green.HealthPath
+	a.Config.Proxy.DrainTimeout = newCfg.Proxy.DrainTimeout
+
+	// Update health checker (it reads from config on each tick)
+	// The health checker already uses the config pointer, so changes apply automatically
+
+	// Log successful reload
+	a.Logger.Info("configuration reloaded",
+		"health_interval", a.Config.Health.Interval,
+		"health_timeout", a.Config.Health.Timeout,
+		"git_poll_interval", a.Config.Git.PollInterval)
+
+	return nil
 }
 
 // Handler returns the HTTP handler for the admin/API server.
