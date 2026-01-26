@@ -2,146 +2,52 @@
 package logging
 
 import (
-	"context"
 	"log/slog"
 	"os"
 	"strings"
 
-	"github.com/coreos/go-systemd/v22/journal"
+	slogjournal "github.com/systemd/slog-journal"
 )
-
-// JournaldHandler is a slog.Handler that writes directly to journald
-// with structured field support. Fields are converted to journald variables
-// (uppercase, underscore-separated).
-type JournaldHandler struct {
-	level  slog.Leveler
-	groups []string
-	attrs  []slog.Attr
-}
 
 // NewJournaldHandler creates a handler that writes to journald if available,
 // otherwise falls back to JSON output on stdout.
+//
+// When running under systemd, this uses the native journald protocol with:
+//   - Automatic field mapping (Message→MESSAGE, Level→PRIORITY, etc.)
+//   - Source location tracking (CODE_FILE, CODE_FUNC, CODE_LINE)
+//   - Large message handling via temporary file descriptors
+//   - Key sanitization to match journald requirements (uppercase, underscores)
+//
+// When not running under systemd, falls back to JSON handler on stdout.
 func NewJournaldHandler(level slog.Leveler) slog.Handler {
-	if !journal.Enabled() {
+	if !IsUnderSystemd() {
 		// Fall back to JSON handler for non-systemd environments
 		return slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})
 	}
-	return &JournaldHandler{level: level}
-}
 
-// Enabled reports whether the handler handles records at the given level.
-func (h *JournaldHandler) Enabled(_ context.Context, level slog.Level) bool {
-	return level >= h.level.Level()
-}
-
-// Handle writes the record to journald.
-func (h *JournaldHandler) Handle(_ context.Context, r slog.Record) error {
-	// Convert slog level to journald priority
-	priority := levelToPriority(r.Level)
-
-	// Build journald variables from attributes
-	vars := make(map[string]string)
-
-	// Add pre-configured attrs
-	for _, a := range h.attrs {
-		addAttrToVars(vars, h.groups, a)
-	}
-
-	// Add record attrs
-	r.Attrs(func(a slog.Attr) bool {
-		addAttrToVars(vars, h.groups, a)
-		return true
+	// Use the official systemd slog-journal handler with key transformation
+	h, err := slogjournal.NewHandler(&slogjournal.Options{
+		Level: level,
+		// Transform keys to journald format: uppercase with underscores
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			a.Key = sanitizeKey(a.Key)
+			return a
+		},
+		ReplaceGroup: func(group string) string {
+			return sanitizeKey(group)
+		},
 	})
-
-	// Add standard fields
-	if r.PC != 0 {
-		// Get source location
-		fs := slog.Source{}
-		_ = slog.NewRecord(r.Time, r.Level, r.Message, r.PC)
-		// The source is available but we skip it for performance
-		// You could add CODE_FILE, CODE_LINE, CODE_FUNC here
-		_ = fs
+	if err != nil {
+		// Fall back to JSON if journald handler creation fails
+		return slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})
 	}
 
-	return journal.Send(r.Message, priority, vars)
-}
-
-// WithAttrs returns a new handler with the given attributes added.
-func (h *JournaldHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	newAttrs := make([]slog.Attr, len(h.attrs)+len(attrs))
-	copy(newAttrs, h.attrs)
-	copy(newAttrs[len(h.attrs):], attrs)
-	return &JournaldHandler{
-		level:  h.level,
-		groups: h.groups,
-		attrs:  newAttrs,
-	}
-}
-
-// WithGroup returns a new handler with the given group appended.
-func (h *JournaldHandler) WithGroup(name string) slog.Handler {
-	if name == "" {
-		return h
-	}
-	newGroups := make([]string, len(h.groups)+1)
-	copy(newGroups, h.groups)
-	newGroups[len(h.groups)] = name
-	return &JournaldHandler{
-		level:  h.level,
-		groups: newGroups,
-		attrs:  h.attrs,
-	}
-}
-
-// levelToPriority converts slog.Level to journal.Priority.
-func levelToPriority(level slog.Level) journal.Priority {
-	switch {
-	case level >= slog.LevelError:
-		return journal.PriErr
-	case level >= slog.LevelWarn:
-		return journal.PriWarning
-	case level >= slog.LevelInfo:
-		return journal.PriInfo
-	default:
-		return journal.PriDebug
-	}
-}
-
-// addAttrToVars adds a slog.Attr to the journald variables map.
-// Keys are converted to uppercase with underscores, prefixed with groups.
-func addAttrToVars(vars map[string]string, groups []string, a slog.Attr) {
-	if a.Equal(slog.Attr{}) {
-		return
-	}
-
-	key := attrKey(groups, a.Key)
-	value := a.Value.Resolve()
-
-	switch value.Kind() {
-	case slog.KindGroup:
-		// Recurse into group
-		newGroups := append(groups, a.Key)
-		for _, ga := range value.Group() {
-			addAttrToVars(vars, newGroups, ga)
-		}
-	default:
-		vars[key] = value.String()
-	}
-}
-
-// attrKey builds a journald-compatible variable name from groups and key.
-// Journald variables must be uppercase, start with a letter, and contain
-// only letters, numbers, and underscores.
-func attrKey(groups []string, key string) string {
-	parts := make([]string, 0, len(groups)+1)
-	for _, g := range groups {
-		parts = append(parts, sanitizeKey(g))
-	}
-	parts = append(parts, sanitizeKey(key))
-	return strings.Join(parts, "_")
+	return h
 }
 
 // sanitizeKey converts a key to journald-compatible format.
+// Journald variables must be uppercase, start with a letter, and contain
+// only letters, numbers, and underscores.
 func sanitizeKey(key string) string {
 	var b strings.Builder
 	b.Grow(len(key))
