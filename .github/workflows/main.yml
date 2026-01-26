@@ -1,0 +1,182 @@
+name: Continuous Integration on main
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  security-events: write
+  packages: write
+  attestations: write
+  id-token: write
+  repository-projects: write
+  contents: write
+  pages: write
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  tag:
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      repository-projects: write
+      contents: write
+    outputs:
+      version: ${{ steps.semver.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get Next Version
+        id: semver
+        run: |
+          # Date-based versioning: YYYY.MM.patch
+          YEAR=$(date +%Y)
+          MONTH=$(date +%-m)
+          BASE="${YEAR}.${MONTH}"
+
+          # Find highest patch for this year.month
+          LATEST=$(git tag -l "${BASE}.*" | sort -t. -k3 -n | tail -1)
+          if [ -z "$LATEST" ]; then
+            PATCH=0
+          else
+            PATCH=$(echo "$LATEST" | cut -d. -f3)
+            PATCH=$((PATCH + 1))
+          fi
+
+          VERSION="${BASE}.${PATCH}"
+          echo "Version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create tag
+        run: |
+          git config --local user.name "GitHub Actions"
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.semver.outputs.version }}" -m "${{ steps.semver.outputs.version }} release"
+          git push origin "${{ steps.semver.outputs.version }}"
+
+  docker:
+    permissions:
+      packages: write
+      attestations: write
+      id-token: write
+    needs: tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install templ
+        run: go install github.com/a-h/templ/cmd/templ@latest
+
+      - name: Generate templates
+        run: templ generate ./internal/ui/templates/
+
+      - name: Build binaries for amd64
+        run: |
+          mkdir -p dist/amd64
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -ldflags="-s -w" -o dist/amd64/bluegreen ./cmd/bluegreen
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -ldflags="-s -w" -o dist/amd64/bgctl ./cmd/bgctl
+
+      - name: Build binaries for arm64
+        run: |
+          mkdir -p dist/arm64
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
+            go build -ldflags="-s -w" -o dist/arm64/bluegreen ./cmd/bluegreen
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
+            go build -ldflags="-s -w" -o dist/arm64/bgctl ./cmd/bgctl
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push image
+        uses: docker/build-push-action@v6
+        id: push
+        with:
+          context: .
+          cache-from: |
+            type=gha,scope=amd64
+            type=gha,scope=arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ needs.tag.outputs.version }}
+            ghcr.io/${{ github.repository }}:latest
+          platforms: linux/arm64,linux/amd64
+
+      - name: Generate artifact attestation
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+  deploy-gh-pages:
+    concurrency:
+      group: 'pages'
+      cancel-in-progress: true
+    needs: ci
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Upload to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  trigger-dependabot:
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Find first open Dependabot PR
+        id: find-pr
+        run: |
+          PR_NUMBER=$(gh pr list --author app/dependabot --state open --json number --jq '.[0].number // empty' --limit 1)
+          if [ "$PR_NUMBER" != "null" ] && [ -n "$PR_NUMBER" ]; then
+            echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+            echo "Found Dependabot PR #$PR_NUMBER"
+          else
+            echo "No open Dependabot PRs found"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.DEPENDABOT_RECREATE_PAT }}
+          GH_REPO: ${{ github.repository }}
+
+      - name: Comment to trigger recreate
+        if: steps.find-pr.outputs.pr_number != ''
+        run: |
+          gh pr comment ${{ steps.find-pr.outputs.pr_number }} --body "@dependabot recreate"
+        env:
+          GH_TOKEN: ${{ secrets.DEPENDABOT_RECREATE_PAT }}
+          GH_REPO: ${{ github.repository }}
