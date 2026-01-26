@@ -121,7 +121,7 @@ jobs:
           mkdir -p html
           gotestsum --jsonfile tests.json --format standard-verbose \
             -- -race -tags=integration -covermode=atomic \
-            -coverprofile="html/coverage.out" -cpuprofile="cpu.profile" \
+            -coverprofile="html/coverage.out" \
             -timeout=15m ./...
         env:
           TESTCONTAINERS_RYUK_DISABLED: "true"
@@ -212,9 +212,14 @@ jobs:
 
       - name: Run benchmark
         run: |
+          # Run benchmarks across all packages (outputs to benchmark.txt)
           go test -run='^$' -bench=. -count=7 -benchmem \
-            -memprofile=html/mem.profile -cpuprofile=html/cpu.profile \
             ./... | tee html/benchmark.txt
+          # Run profiling only on the proxy package (has the main benchmarks)
+          # -cpuprofile/-memprofile only work with a single package
+          go test -run='^$' -bench=. -count=1 -benchmem \
+            -memprofile=html/mem.profile -cpuprofile=html/cpu.profile \
+            ./internal/proxy
           benchstat html/benchmark.txt
 
       - name: Download past benchmark result from GitHub Pages
@@ -255,7 +260,8 @@ jobs:
           path: |
             tests.json
             html/coverage.out
-            cpu.profile
+            html/cpu.profile
+            html/mem.profile
             html/benchmark.txt
             dist/
 
