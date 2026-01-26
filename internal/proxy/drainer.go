@@ -15,6 +15,8 @@ type Drainer struct {
 	draining          atomic.Bool
 	drainCh           chan struct{}
 	mu                sync.Mutex
+	drainMu           sync.Mutex    // Serializes Drain() calls to prevent WaitGroup reuse
+	prevDone          chan struct{} // Tracks previous drain goroutine completion
 }
 
 // NewDrainer creates a new connection drainer.
@@ -55,7 +57,24 @@ func (d *Drainer) IsDraining() bool {
 
 // Drain starts the drain process and waits for all active connections to complete.
 // It returns when all connections are drained or the context is cancelled.
+// Concurrent calls to Drain() are serialized to prevent WaitGroup reuse panics.
 func (d *Drainer) Drain(ctx context.Context, timeout time.Duration) error {
+	// Serialize drain operations to prevent WaitGroup reuse while Wait() is running
+	d.drainMu.Lock()
+	defer d.drainMu.Unlock()
+
+	// Wait for any previous drain goroutine to complete before starting a new one.
+	// This prevents multiple wg.Wait() goroutines from running concurrently,
+	// which would cause a panic if the WaitGroup is reused after Reset().
+	if d.prevDone != nil {
+		select {
+		case <-d.prevDone:
+			// Previous drain completed
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+
 	d.mu.Lock()
 	if d.draining.Load() {
 		d.mu.Unlock()
@@ -66,6 +85,7 @@ func (d *Drainer) Drain(ctx context.Context, timeout time.Duration) error {
 	d.mu.Unlock()
 
 	done := make(chan struct{})
+	d.prevDone = done
 	go func() {
 		d.wg.Wait()
 		close(done)
