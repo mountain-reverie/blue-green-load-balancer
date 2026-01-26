@@ -1,5 +1,10 @@
 # Blue/Green Load Balancer
 
+[![CI](https://github.com/mountain-reverie/blue-green-load-balancer/actions/workflows/main.yml/badge.svg)](https://github.com/mountain-reverie/blue-green-load-balancer/actions/workflows/main.yml)
+[![Coverage](https://mountain-reverie.github.io/blue-green-load-balancer/coverage-badge.svg)](https://mountain-reverie.github.io/blue-green-load-balancer/coverage.html)
+[![Benchmark](https://mountain-reverie.github.io/blue-green-load-balancer/benchmark/badge.svg)](https://mountain-reverie.github.io/blue-green-load-balancer/benchmark/)
+[![Go Report Card](https://goreportcard.com/badge/github.com/mountain-reverie/blue-green-load-balancer)](https://goreportcard.com/report/github.com/mountain-reverie/blue-green-load-balancer)
+
 A Go-based load balancer for blue/green deployments with git-driven switching and a secure admin interface accessible only via Tailscale.
 
 ## Overview
@@ -43,7 +48,7 @@ This load balancer proxies HTTP traffic between two backend services (blue and g
 
 ### Prerequisites
 
-- Go 1.22 or later
+- Go 1.25 or later
 - Docker (for integration tests)
 - Tailscale auth key (for production) or Headscale server (for self-hosted)
 
@@ -62,6 +67,21 @@ go build -o bluegreen ./cmd/bluegreen
 # With local admin interface (for development)
 ./bluegreen -config config/config.yaml -local-admin :8081
 ```
+
+### Docker
+
+Pre-built multi-architecture images are available:
+
+```bash
+# Pull the latest image
+docker pull ghcr.io/mountain-reverie/blue-green-load-balancer:latest
+
+# Run with a config file
+docker run -v /path/to/config.yaml:/etc/bluegreen/config.yaml \
+  ghcr.io/mountain-reverie/blue-green-load-balancer:latest
+```
+
+Images are built for both `linux/amd64` and `linux/arm64` using distroless base images.
 
 ## Configuration
 
@@ -302,6 +322,8 @@ templ generate ./internal/ui/templates/
 
 ## Command Line Options
 
+### bluegreen
+
 ```
 Usage: bluegreen [options]
 
@@ -312,6 +334,44 @@ Options:
         Run admin server locally on this address instead of Tailscale
   -log-level string
         Log level: debug, info, warn, error (default "info")
+```
+
+### bgctl
+
+A CLI tool for interacting with the admin server via Tailscale:
+
+```
+Usage: bgctl [global flags] <command>
+
+Commands:
+  status    Display current blue/green status
+  metrics   Display current metrics snapshot
+  refresh   Trigger a git refresh
+
+Global Flags:
+  -H, --hostname string      Admin server hostname (default: bluegreen-admin)
+  --control-url string       Tailscale/Headscale control server URL
+  --auth-key string          Tailscale auth key (or TS_AUTH_KEY env)
+  --state-dir string         Tailscale state directory (default: ~/.bgctl/tailscale)
+  -o, --output string        Output format: json or text (default: text)
+  --timeout duration         Request timeout (default: 30s)
+  -v, --verbose              Enable verbose logging
+```
+
+Example usage:
+
+```bash
+# Check status
+bgctl status
+
+# JSON output for scripting
+bgctl -o json status | jq '.active_service'
+
+# With Headscale
+bgctl --control-url https://headscale.example.com status
+
+# Trigger git refresh
+bgctl refresh
 ```
 
 ## License
