@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"tailscale.com/client/tailscale"
+	"tailscale.com/client/local"
 	"tailscale.com/tsnet"
 )
 
@@ -96,7 +96,7 @@ func New(ctx context.Context, cfg *Config) (*Client, error) {
 }
 
 // waitForTailscaleIP waits until the tsnet server has a Tailscale IP assigned.
-func waitForTailscaleIP(ctx context.Context, lc *tailscale.LocalClient) error {
+func waitForTailscaleIP(ctx context.Context, lc *local.Client) error {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 

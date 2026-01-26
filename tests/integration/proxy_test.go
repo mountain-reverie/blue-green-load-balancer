@@ -24,14 +24,14 @@ func TestProxyRouting(t *testing.T) {
 	blueServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Backend", "blue")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("blue response"))
+		_, _ = w.Write([]byte("blue response"))
 	}))
 	defer blueServer.Close()
 
 	greenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Backend", "green")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("green response"))
+		_, _ = w.Write([]byte("green response"))
 	}))
 	defer greenServer.Close()
 
@@ -130,7 +130,7 @@ func TestSwitcherWithHealthCheck(t *testing.T) {
 			}
 			return
 		}
-		w.Write([]byte("blue"))
+		_, _ = w.Write([]byte("blue"))
 	}))
 	defer blueServer.Close()
 
@@ -139,7 +139,7 @@ func TestSwitcherWithHealthCheck(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		w.Write([]byte("green"))
+		_, _ = w.Write([]byte("green"))
 	}))
 	defer greenServer.Close()
 
@@ -217,12 +217,12 @@ func TestConcurrentRequests(t *testing.T) {
 	blueServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestCount.Add(1)
 		time.Sleep(10 * time.Millisecond) // Simulate some work
-		w.Write([]byte("blue"))
+		_, _ = w.Write([]byte("blue"))
 	}))
 	defer blueServer.Close()
 
 	greenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("green"))
+		_, _ = w.Write([]byte("green"))
 	}))
 	defer greenServer.Close()
 

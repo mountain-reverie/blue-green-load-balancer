@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"tailscale.com/client/tailscale"
+	"tailscale.com/client/local"
 	"tailscale.com/tsnet"
 )
 
@@ -34,12 +34,12 @@ func NewTestClient(ctx context.Context, hostname, stateDir, controlURL, authKey 
 	// Wait for Tailscale IP assignment
 	lc, err := srv.LocalClient()
 	if err != nil {
-		srv.Close()
+		_ = srv.Close()
 		return nil, fmt.Errorf("getting local client: %w", err)
 	}
 
 	if err := waitForTailscaleIP(ctx, lc); err != nil {
-		srv.Close()
+		_ = srv.Close()
 		return nil, fmt.Errorf("waiting for Tailscale IP: %w", err)
 	}
 
@@ -55,7 +55,7 @@ func NewTestClient(ctx context.Context, hostname, stateDir, controlURL, authKey 
 }
 
 // waitForTailscaleIP waits until the tsnet server has a Tailscale IP assigned.
-func waitForTailscaleIP(ctx context.Context, lc *tailscale.LocalClient) error {
+func waitForTailscaleIP(ctx context.Context, lc *local.Client) error {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 

@@ -64,32 +64,32 @@ func TestMain(m *testing.M) {
 	// Start the admin server with UI
 	testAdminServer, err = createTestAdminServer(testBlueServer.URL, testGreenServer.URL)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to create admin server: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "failed to create admin server: %v\n", err)
 		testBlueServer.Close()
 		testGreenServer.Close()
-		playwrightcigo.Uninstall()
+		_ = playwrightcigo.Uninstall()
 		os.Exit(1)
 	}
 
 	// Initialize Playwright with Chromium (more stable in containers)
 	testBrowser, err = playwrightcigo.Chromium()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to initialize Playwright Chromium: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "failed to initialize Playwright Chromium: %v\n", err)
 		testAdminServer.Close()
 		testBlueServer.Close()
 		testGreenServer.Close()
-		playwrightcigo.Uninstall()
+		_ = playwrightcigo.Uninstall()
 		os.Exit(1)
 	}
 
 	code := m.Run()
 
 	// Cleanup
-	testBrowser.Close()
+	_ = testBrowser.Close()
 	testAdminServer.Close()
 	testBlueServer.Close()
 	testGreenServer.Close()
-	playwrightcigo.Uninstall()
+	_ = playwrightcigo.Uninstall()
 
 	os.Exit(code)
 }
@@ -99,12 +99,12 @@ func createMockBackend(name string) *httptest.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, "OK")
+		_, _ = fmt.Fprintf(w, "OK")
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Service", name)
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, "Hello from %s!\n", name)
+		_, _ = fmt.Fprintf(w, "Hello from %s!\n", name)
 	})
 	return httptest.NewServer(mux)
 }
@@ -214,26 +214,6 @@ func shouldUpdateBaselines() bool {
 	return os.Getenv("UPDATE_BASELINES") == "1"
 }
 
-// saveNamedScreenshot saves a screenshot with a specific name to testdata/.
-// Use this for capturing specific states (e.g., before/after a switch).
-// Only saves if the baseline doesn't exist or UPDATE_BASELINES=1 is set.
-func saveNamedScreenshot(t *testing.T, page playwright.Page, name string) {
-	path := filepath.Join(testdataDir(), fmt.Sprintf("%s.png", name))
-
-	// Skip if baseline exists and we're not updating
-	if _, err := os.Stat(path); err == nil && !shouldUpdateBaselines() {
-		return
-	}
-
-	_, err := page.Screenshot(playwright.PageScreenshotOptions{
-		Path:     playwright.String(path),
-		FullPage: playwright.Bool(true),
-	})
-	if err != nil {
-		t.Logf("failed to take screenshot %s: %v", name, err)
-	}
-}
-
 // manageScreenshot takes a screenshot during the test run.
 // Saves a baseline screenshot to testdata/ only if it doesn't exist or UPDATE_BASELINES=1.
 // If the test fails, saves to testdata/failed/ for debugging.
@@ -270,7 +250,7 @@ func manageScreenshot(t *testing.T, page playwright.Page) {
 func TestDashboardLoads(t *testing.T) {
 	page, err := testBrowser.NewPage()
 	require.NoError(t, err, "failed to create new page")
-	defer page.Close()
+	defer func() { _ = page.Close() }()
 	defer manageScreenshot(t, page)
 
 	// Navigate to the dashboard
@@ -313,7 +293,7 @@ func TestDashboardLoads(t *testing.T) {
 func TestStatusSection(t *testing.T) {
 	page, err := testBrowser.NewPage()
 	require.NoError(t, err, "failed to create new page")
-	defer page.Close()
+	defer func() { _ = page.Close() }()
 	defer manageScreenshot(t, page)
 
 	// Navigate to the dashboard
@@ -377,7 +357,7 @@ func TestStatusSection(t *testing.T) {
 func TestMetricsSection(t *testing.T) {
 	page, err := testBrowser.NewPage()
 	require.NoError(t, err, "failed to create new page")
-	defer page.Close()
+	defer func() { _ = page.Close() }()
 	defer manageScreenshot(t, page)
 
 	// Navigate to the dashboard
@@ -451,7 +431,7 @@ func TestMetricsSection(t *testing.T) {
 func TestGitControls(t *testing.T) {
 	page, err := testBrowser.NewPage()
 	require.NoError(t, err, "failed to create new page")
-	defer page.Close()
+	defer func() { _ = page.Close() }()
 	defer manageScreenshot(t, page)
 
 	// Navigate to the dashboard
@@ -489,7 +469,7 @@ func TestGitControls(t *testing.T) {
 func TestSSEConnection(t *testing.T) {
 	page, err := testBrowser.NewPage()
 	require.NoError(t, err, "failed to create new page")
-	defer page.Close()
+	defer func() { _ = page.Close() }()
 	defer manageScreenshot(t, page)
 
 	// Navigate to the dashboard
@@ -522,7 +502,7 @@ func TestSSEConnection(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	require.NoError(t, err, "failed to connect to SSE endpoint")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode, "SSE endpoint should return 200 OK")
 	assert.Equal(t, "text/event-stream", resp.Header.Get("Content-Type"), "SSE endpoint should return text/event-stream content type")
@@ -564,7 +544,7 @@ func TestSSEConnection(t *testing.T) {
 func TestHistorySection(t *testing.T) {
 	page, err := testBrowser.NewPage()
 	require.NoError(t, err, "failed to create new page")
-	defer page.Close()
+	defer func() { _ = page.Close() }()
 	defer manageScreenshot(t, page)
 
 	// Navigate to the dashboard
@@ -613,7 +593,7 @@ func TestHistorySection(t *testing.T) {
 func TestDashboardResponsiveness(t *testing.T) {
 	page, err := testBrowser.NewPage()
 	require.NoError(t, err, "failed to create new page")
-	defer page.Close()
+	defer func() { _ = page.Close() }()
 	defer manageScreenshot(t, page)
 
 	// Test with different viewport sizes
@@ -660,7 +640,7 @@ func TestDashboardResponsiveness(t *testing.T) {
 func TestDashboardAccessibility(t *testing.T) {
 	page, err := testBrowser.NewPage()
 	require.NoError(t, err, "failed to create new page")
-	defer page.Close()
+	defer func() { _ = page.Close() }()
 	defer manageScreenshot(t, page)
 
 	_, err = page.Goto(testAdminServer.URL)

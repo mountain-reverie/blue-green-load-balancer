@@ -158,16 +158,16 @@ func setupTestSuite(t *testing.T) *TestSuite {
 // Cleanup cleans up all test resources.
 func (s *TestSuite) Cleanup() {
 	if s.testClient != nil {
-		s.testClient.Close()
+		_ = s.testClient.Close()
 	}
 	if s.adminSrv != nil {
-		s.adminSrv.Stop()
+		_ = s.adminSrv.Stop()
 	}
 	if s.headscale != nil {
-		s.headscale.Terminate(s.ctx)
+		_ = s.headscale.Terminate(s.ctx)
 	}
 	if s.tmpDir != "" {
-		os.RemoveAll(s.tmpDir)
+		_ = os.RemoveAll(s.tmpDir)
 	}
 	s.cancel()
 }
@@ -199,7 +199,7 @@ func TestHeadscaleAdminStatus(t *testing.T) {
 
 	resp, err := suite.testClient.Get(suite.ctx, suite.adminURL("/api/status"))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -229,7 +229,7 @@ func TestHeadscaleWebhookRefresh(t *testing.T) {
 	resp, err := suite.testClient.Post(suite.ctx, suite.adminURL("/api/webhook/refresh"),
 		"application/json", strings.NewReader(`{}`))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Refresh may fail due to no git config or webhook not being registered,
 	// but we're testing connectivity - any HTTP response proves the network path works
@@ -258,7 +258,7 @@ func TestHeadscaleDashboardUI(t *testing.T) {
 
 	resp, err := suite.testClient.Get(suite.ctx, suite.adminURL("/"))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -285,7 +285,7 @@ func TestHeadscaleMetrics(t *testing.T) {
 
 	resp, err := suite.testClient.Get(suite.ctx, suite.adminURL("/api/metrics"))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -312,7 +312,7 @@ func TestHeadscaleMetricsHistory(t *testing.T) {
 
 	resp, err := suite.testClient.Get(suite.ctx, suite.adminURL("/api/metrics/history"))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -344,7 +344,7 @@ func TestHeadscaleSSE(t *testing.T) {
 
 	resp, err := suite.testClient.Get(sseCtx, suite.adminURL("/events"))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Contains(t, resp.Header.Get("Content-Type"), "text/event-stream",
@@ -352,7 +352,6 @@ func TestHeadscaleSSE(t *testing.T) {
 
 	// Read one event or timeout
 	reader := bufio.NewReader(resp.Body)
-	eventReceived := false
 
 	for {
 		select {
@@ -364,23 +363,18 @@ func TestHeadscaleSSE(t *testing.T) {
 			line, err := reader.ReadString('\n')
 			if err != nil {
 				if err == io.EOF || sseCtx.Err() != nil {
-					break
+					t.Log("SSE endpoint accessible")
+					return
 				}
 				t.Logf("SSE read error: %v", err)
-				break
+				return
 			}
 			if strings.HasPrefix(line, "data:") {
-				eventReceived = true
 				t.Logf("Received SSE event: %s", strings.TrimSpace(line))
 				return
 			}
 		}
-		if eventReceived {
-			break
-		}
 	}
-
-	t.Log("SSE endpoint accessible")
 }
 
 func TestHeadscaleDirectIP(t *testing.T) {
@@ -401,7 +395,7 @@ func TestHeadscaleDirectIP(t *testing.T) {
 
 	resp, err := suite.testClient.Get(suite.ctx, url)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	t.Logf("Direct IP access successful: %s", url)
@@ -420,7 +414,7 @@ func TestHeadscaleOpenAPI(t *testing.T) {
 
 	resp, err := suite.testClient.Get(suite.ctx, suite.adminURL("/api/openapi.json"))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
