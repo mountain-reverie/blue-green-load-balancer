@@ -29,6 +29,7 @@ jobs:
       id-token: write
       repository-projects: write
       contents: write
+      workflows: write  # Required when tag includes workflow file changes
     outputs:
       version: ${{ steps.semver.outputs.version }}
     steps:
