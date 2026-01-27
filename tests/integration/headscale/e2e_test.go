@@ -697,7 +697,6 @@ func TestE2EGitWebhookHeadscale(t *testing.T) {
 
 		// Read from SSE stream to verify we receive events
 		reader := bufio.NewReader(resp.Body)
-		eventReceived := false
 
 		for {
 			select {
@@ -710,31 +709,26 @@ func TestE2EGitWebhookHeadscale(t *testing.T) {
 				line, err := reader.ReadString('\n')
 				if err != nil {
 					if errors.Is(err, io.EOF) || sseCtx.Err() != nil {
-						break
+						t.Log("SSE endpoint accessible")
+						return
 					}
 					t.Logf("SSE read error: %v", err)
-					break
+					return
 				}
 				// SSE events start with "data:" prefix
 				if strings.HasPrefix(line, "data:") {
-					eventReceived = true
 					t.Logf("Received SSE event: %s", strings.TrimSpace(line))
 					return
 				}
 			}
-			if eventReceived {
-				break
-			}
 		}
-
-		t.Log("SSE endpoint accessible")
 	})
 
 	// --- Test 8: bgctl client can get status ---
 	t.Run("bgctl status via Tailscale", func(t *testing.T) {
 		client, err := suite.createBgctlClient()
 		require.NoError(t, err, "failed to create bgctl client")
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 
 		status, err := client.GetStatus(suite.ctx)
 		require.NoError(t, err, "bgctl GetStatus failed")
@@ -768,7 +762,7 @@ func TestE2EGitWebhookHeadscale(t *testing.T) {
 	t.Run("bgctl refresh via Tailscale", func(t *testing.T) {
 		client, err := suite.createBgctlClient()
 		require.NoError(t, err, "failed to create bgctl client")
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 
 		// Get initial status
 		initialStatus, err := client.GetStatus(suite.ctx)

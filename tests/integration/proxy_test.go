@@ -24,14 +24,14 @@ func TestProxyRouting(t *testing.T) {
 	blueServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Backend", "blue")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("blue response"))
+		_, _ = w.Write([]byte("blue response"))
 	}))
 	defer blueServer.Close()
 
 	greenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Backend", "green")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("green response"))
+		_, _ = w.Write([]byte("green response"))
 	}))
 	defer greenServer.Close()
 
@@ -120,17 +120,18 @@ func TestProxyErrorHandling(t *testing.T) {
 
 func TestSwitcherWithHealthCheck(t *testing.T) {
 	// Create mock backend servers
-	blueHealthy := true
+	var blueHealthy atomic.Bool
+	blueHealthy.Store(true)
 	blueServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health" {
-			if blueHealthy {
+			if blueHealthy.Load() {
 				w.WriteHeader(http.StatusOK)
 			} else {
 				w.WriteHeader(http.StatusServiceUnavailable)
 			}
 			return
 		}
-		w.Write([]byte("blue"))
+		_, _ = w.Write([]byte("blue"))
 	}))
 	defer blueServer.Close()
 
@@ -139,7 +140,7 @@ func TestSwitcherWithHealthCheck(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		w.Write([]byte("green"))
+		_, _ = w.Write([]byte("green"))
 	}))
 	defer greenServer.Close()
 
@@ -182,7 +183,7 @@ func TestSwitcherWithHealthCheck(t *testing.T) {
 
 	// Test switch to unhealthy blue (should fail)
 	t.Run("switch to unhealthy blue", func(t *testing.T) {
-		blueHealthy = false
+		blueHealthy.Store(false)
 		time.Sleep(200 * time.Millisecond) // Wait for health check
 
 		err := sw.Switch(ctx, config.ServiceBlue, switcher.TriggerGitTag)
@@ -192,7 +193,7 @@ func TestSwitcherWithHealthCheck(t *testing.T) {
 
 	// Make blue healthy again and switch
 	t.Run("switch to recovered blue", func(t *testing.T) {
-		blueHealthy = true
+		blueHealthy.Store(true)
 		time.Sleep(200 * time.Millisecond) // Wait for health check
 
 		err := sw.Switch(ctx, config.ServiceBlue, switcher.TriggerGitTag)
@@ -217,12 +218,12 @@ func TestConcurrentRequests(t *testing.T) {
 	blueServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestCount.Add(1)
 		time.Sleep(10 * time.Millisecond) // Simulate some work
-		w.Write([]byte("blue"))
+		_, _ = w.Write([]byte("blue"))
 	}))
 	defer blueServer.Close()
 
 	greenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("green"))
+		_, _ = w.Write([]byte("green"))
 	}))
 	defer greenServer.Close()
 
