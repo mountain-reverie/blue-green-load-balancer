@@ -214,15 +214,50 @@ jobs:
 
       - name: Run benchmark
         run: |
-          # Run benchmarks across all packages (outputs to benchmark.txt)
-          go test -run='^$' -bench=. -count=7 -benchmem \
-            ./... | tee html/benchmark.txt
-          # Run profiling only on the proxy package (has the main benchmarks)
-          # -cpuprofile/-memprofile only work with a single package
+          # Run benchmarks across all packages with multiple samples for statistical stability
+          go test -run='^$' -bench=. -count=10 -benchmem \
+            ./... | tee html/benchmark-raw.txt
+
+          # Use benchstat to get median values, then convert back to Go benchmark format
+          # This gives the benchmark action stable median values instead of noisy single runs
+          {
+            # Preserve header from raw output
+            grep -E '^(goos:|goarch:|pkg:|cpu:)' html/benchmark-raw.txt | head -4
+
+            # Parse benchstat output and convert to Go benchmark format
+            benchstat html/benchmark-raw.txt 2>/dev/null | while IFS= read -r line; do
+              # Match lines like: ProxyRouting-16              72.81µ ± 5%
+              if [[ $line =~ ^([A-Za-z][A-Za-z0-9_/-]+)[[:space:]]+([0-9.]+)([µmn]?[s]?|[KMG]?i?)[[:space:]]*± ]]; then
+                name="${BASH_REMATCH[1]}"
+                value="${BASH_REMATCH[2]}"
+                suffix="${BASH_REMATCH[3]}"
+
+                # Determine unit based on suffix
+                case "$suffix" in
+                  µ|µs) num=$(echo "$value * 1000" | bc -l); unit="ns/op" ;;
+                  m|ms) num=$(echo "$value * 1000000" | bc -l); unit="ns/op" ;;
+                  s)    num=$(echo "$value * 1000000000" | bc -l); unit="ns/op" ;;
+                  n|ns) num="$value"; unit="ns/op" ;;
+                  Ki)   num=$(echo "$value * 1024" | bc -l); unit="B/op" ;;
+                  Mi)   num=$(echo "$value * 1048576" | bc -l); unit="B/op" ;;
+                  *)    num="$value"; unit="allocs/op" ;;
+                esac
+
+                printf "Benchmark%s\t1\t%.0f %s\n" "$name" "$num" "$unit"
+              fi
+            done
+
+            echo "PASS"
+          } > html/benchmark.txt
+
+          # Show benchstat analysis in logs
+          echo "=== Benchstat Analysis ==="
+          benchstat html/benchmark-raw.txt
+
+          # Run profiling separately (only needs single run)
           go test -run='^$' -bench=. -count=1 -benchmem \
             -memprofile=html/mem.profile -cpuprofile=html/cpu.profile \
             ./internal/proxy
-          benchstat html/benchmark.txt
 
       - name: Download past benchmark result from GitHub Pages
         if: matrix.platform == 'amd64'
@@ -250,6 +285,10 @@ jobs:
           fail-on-alert: true
           comment-on-alert: true
           auto-push: false
+          # Allow 3x variance to account for CI runner variability
+          # Combined with benchstat median values, this should catch real regressions
+          # while avoiding false positives from noisy CI environments
+          alert-threshold: '300%'
 
       - name: Generate data.js
         if: matrix.platform == 'amd64'
