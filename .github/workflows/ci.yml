@@ -214,45 +214,14 @@ jobs:
 
       - name: Run benchmark
         run: |
-          # Run benchmarks across all packages with multiple samples for statistical stability
+          # Run benchmarks with multiple samples for warmup and stability
+          # The benchmark action will use the last value from each benchmark
           go test -run='^$' -bench=. -count=10 -benchmem \
-            ./... | tee html/benchmark-raw.txt
+            ./... | tee html/benchmark.txt
 
-          # Use benchstat to get median values, then convert back to Go benchmark format
-          # This gives the benchmark action stable median values instead of noisy single runs
-          {
-            # Preserve header from raw output
-            grep -E '^(goos:|goarch:|pkg:|cpu:)' html/benchmark-raw.txt | head -4
-
-            # Parse benchstat output and convert to Go benchmark format
-            benchstat html/benchmark-raw.txt 2>/dev/null | while IFS= read -r line; do
-              # Match lines like: ProxyRouting-16              72.81µ ± 5%
-              if [[ $line =~ ^([A-Za-z][A-Za-z0-9_/-]+)[[:space:]]+([0-9.]+)([µmn]?[s]?|[KMG]?i?)[[:space:]]*± ]]; then
-                name="${BASH_REMATCH[1]}"
-                value="${BASH_REMATCH[2]}"
-                suffix="${BASH_REMATCH[3]}"
-
-                # Determine unit based on suffix
-                case "$suffix" in
-                  µ|µs) num=$(echo "$value * 1000" | bc -l); unit="ns/op" ;;
-                  m|ms) num=$(echo "$value * 1000000" | bc -l); unit="ns/op" ;;
-                  s)    num=$(echo "$value * 1000000000" | bc -l); unit="ns/op" ;;
-                  n|ns) num="$value"; unit="ns/op" ;;
-                  Ki)   num=$(echo "$value * 1024" | bc -l); unit="B/op" ;;
-                  Mi)   num=$(echo "$value * 1048576" | bc -l); unit="B/op" ;;
-                  *)    num="$value"; unit="allocs/op" ;;
-                esac
-
-                printf "Benchmark%s\t1\t%.0f %s\n" "$name" "$num" "$unit"
-              fi
-            done
-
-            echo "PASS"
-          } > html/benchmark.txt
-
-          # Show benchstat analysis in logs
+          # Show benchstat analysis in logs for reference
           echo "=== Benchstat Analysis ==="
-          benchstat html/benchmark-raw.txt
+          benchstat html/benchmark.txt
 
           # Run profiling separately (only needs single run)
           go test -run='^$' -bench=. -count=1 -benchmem \
