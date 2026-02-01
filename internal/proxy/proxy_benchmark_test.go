@@ -143,10 +143,11 @@ func BenchmarkProxyRoutingWithCallback(b *testing.B) {
 }
 
 // BenchmarkProxyConcurrent measures proxy performance under concurrent load.
-// Note: High concurrency levels (100+) are excluded as they produce highly
+// Note: High concurrency levels (50+) are excluded as they produce highly
 // variable results on shared CI runners (up to 79000x variance observed).
+// Concurrency 10 with 4 procs still provides meaningful parallel testing.
 func BenchmarkProxyConcurrent(b *testing.B) {
-	concurrencyLevels := []int{1, 10, 50}
+	concurrencyLevels := []int{1, 10}
 
 	for _, concurrency := range concurrencyLevels {
 		b.Run(fmt.Sprintf("concurrency-%d", concurrency), func(b *testing.B) {
@@ -292,8 +293,9 @@ func BenchmarkSwitch(b *testing.B) {
 
 // BenchmarkSwitchDuringLoad measures switch performance with concurrent requests.
 // Note: High concurrency levels excluded due to CI variability.
+// Only testing with 10 concurrent workers for stable results.
 func BenchmarkSwitchDuringLoad(b *testing.B) {
-	concurrencyLevels := []int{10, 50}
+	concurrencyLevels := []int{10}
 
 	for _, concurrency := range concurrencyLevels {
 		b.Run(fmt.Sprintf("concurrent-%d", concurrency), func(b *testing.B) {
@@ -421,9 +423,9 @@ func BenchmarkSwitchLatency(b *testing.B) {
 }
 
 // BenchmarkDrainWithActiveConnections measures drain time with varying connection counts.
-// Note: High connection counts excluded due to CI variability.
+// Note: High connection counts (100+) excluded due to CI variability.
 func BenchmarkDrainWithActiveConnections(b *testing.B) {
-	connectionCounts := []int{0, 10, 100}
+	connectionCounts := []int{0, 10}
 
 	for _, count := range connectionCounts {
 		b.Run(fmt.Sprintf("connections-%d", count), func(b *testing.B) {
