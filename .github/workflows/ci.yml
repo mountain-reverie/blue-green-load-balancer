@@ -99,7 +99,7 @@ jobs:
           output-format: sarif
 
       - name: Upload Anchore Scan SARIF Report
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: ${{ steps.scan.outputs.sarif }}
 
@@ -110,7 +110,7 @@ jobs:
 
       - name: Initialize CodeQL
         if: matrix.platform == 'amd64'
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: go
           build-mode: manual
@@ -130,7 +130,7 @@ jobs:
 
       - name: Perform CodeQL Analysis
         if: matrix.platform == 'amd64'
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: "/language:go"
 
