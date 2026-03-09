@@ -77,7 +77,7 @@ jobs:
             go build -ldflags="-s -w" -o dist/${{ matrix.platform }}/bgctl ./cmd/bgctl
 
       - name: Build Docker image locally with GHA cache
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: false
